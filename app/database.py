@@ -33,3 +33,8 @@ def healthcheck() -> bool:
             cur.execute("SELECT 1")
             return cur.fetchone() is not None
 
+
+def ensure_schema() -> None:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")

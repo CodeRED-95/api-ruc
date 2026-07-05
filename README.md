@@ -8,6 +8,8 @@ API profesional en FastAPI para consultar un padrón reducido de RUC de SUNAT co
 - Búsqueda por razón social con índice de texto
 - Filtros por estado, condición y ubigeo
 - Paginación y límite por defecto
+- Autenticación obligatoria por `X-API-Key`
+- Administración por `X-Admin-Key`
 - Caché opcional en Redis para consultas por RUC
 - Importación masiva con `COPY`
 - Swagger automático en `/docs`
@@ -48,7 +50,19 @@ sunat-api/
 cp .env.example .env
 ```
 
-Ajusta la contraseña y, si quieres, los límites de paginación.
+Ajusta como mínimo:
+
+- `POSTGRES_PASSWORD`
+- `API_ADMIN_KEY`
+- `HASH_SECRET`
+
+Si quieres, también ajusta:
+
+- `DEFAULT_DAILY_LIMIT`
+- `DEFAULT_MINUTE_LIMIT`
+- `TOKEN_LENGTH`
+- `DEFAULT_PAGE_SIZE`
+- `MAX_PAGE_SIZE`
 
 ## Paso 2. Levantar PostgreSQL y Redis
 
@@ -108,6 +122,18 @@ OpenAPI:
 
 ## Endpoints
 
+Todos los endpoints públicos de consulta requieren:
+
+```http
+X-API-Key: tu_token
+```
+
+Los endpoints administrativos requieren:
+
+```http
+X-Admin-Key: tu_clave_admin
+```
+
 ### GET `/ruc/{ruc}`
 Consulta exacta por RUC.
 
@@ -115,6 +141,39 @@ Ejemplo:
 
 ```bash
 curl http://localhost:8000/ruc/20123456789
+```
+
+Ejemplo autenticado:
+
+```bash
+curl -H "X-API-Key: TU_API_KEY" http://localhost:8000/ruc/20123456789
+```
+
+### Python `requests`
+
+```python
+import requests
+
+response = requests.get(
+    "http://localhost:8000/ruc/20123456789",
+    headers={"X-API-Key": "TU_API_KEY"},
+    timeout=30,
+)
+print(response.status_code)
+print(response.json())
+```
+
+### JavaScript `fetch`
+
+```javascript
+const response = await fetch("http://localhost:8000/ruc/20123456789", {
+  headers: {
+    "X-API-Key": "TU_API_KEY",
+  },
+});
+
+const data = await response.json();
+console.log(response.status, data);
 ```
 
 ### GET `/buscar?nombre=texto`
@@ -137,6 +196,40 @@ Lista por ubigeo.
 
 ### GET `/health`
 Verifica API y base de datos.
+
+## Respuestas
+
+- `200 OK` consulta exitosa
+- `401 Unauthorized` token inválido, ausente o desactivado
+- `404 Not Found` RUC no encontrado
+- `429 Too Many Requests` límite diario o por minuto excedido
+- `500 Internal Server Error` error inesperado
+
+## Endpoints administrativos
+
+- `POST /admin/api-keys`
+- `GET /admin/api-keys`
+- `GET /admin/api-keys/search?nombre=...`
+- `PATCH /admin/api-keys/{id}/activate`
+- `PATCH /admin/api-keys/{id}/deactivate`
+- `DELETE /admin/api-keys/{id}`
+- `POST /admin/api-keys/{id}/regenerate`
+- `GET /admin/api-keys/{id}/stats`
+- `GET /admin/api-keys/{id}/logs`
+
+## Ejemplo administrativo
+
+```bash
+curl -X POST http://localhost:8000/admin/api-keys \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Key: TU_ADMIN_KEY" \
+  -d '{
+    "nombre": "cliente-a",
+    "descripcion": "Acceso para cliente A",
+    "limite_diario": 5000,
+    "limite_por_minuto": 120
+  }'
+```
 
 ## Rendimiento
 
@@ -177,4 +270,3 @@ Antes de subirlo:
 - El importador espera un delimitador `|` por defecto.
 - Si tu archivo usa otro delimitador, cambia `PADRON_DELIMITER`.
 - `pg_trgm` se crea antes de la tabla al iniciar PostgreSQL por primera vez; si ya existe el volumen, aplica el schema manualmente.
-

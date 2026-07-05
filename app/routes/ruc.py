@@ -1,14 +1,14 @@
 import os
 import re
-from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.database import get_conn
+from app.services.auth import validate_api_key
 from app.schemas import PaginatedRucResponse, RucResponse
 from app.services.cache import get_json, set_json
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(validate_api_key)])
 
 DEFAULT_PAGE_SIZE = int(os.getenv("DEFAULT_PAGE_SIZE", "50"))
 MAX_PAGE_SIZE = int(os.getenv("MAX_PAGE_SIZE", "200"))
@@ -34,8 +34,8 @@ def row_to_dict(row) -> dict:
     }
 
 
-@router.get("/ruc/{ruc}", response_model=RucResponse)
-def get_by_ruc(ruc: str):
+@router.get("/ruc/{ruc}", response_model=RucResponse, responses={401: {"description": "Unauthorized"}, 404: {"description": "Not Found"}, 429: {"description": "Too Many Requests"}, 500: {"description": "Server Error"}})
+def get_by_ruc(ruc: str, request: Request):
     ruc = validate_ruc(ruc)
     cache_key = f"ruc:{ruc}"
     cached = get_json(cache_key)
@@ -60,8 +60,8 @@ def get_by_ruc(ruc: str):
     return data
 
 
-@router.get("/buscar", response_model=PaginatedRucResponse)
-def search_by_name(nombre: str = Query(..., min_length=2), page: int = 1, page_size: int = DEFAULT_PAGE_SIZE):
+@router.get("/buscar", response_model=PaginatedRucResponse, responses={401: {"description": "Unauthorized"}, 429: {"description": "Too Many Requests"}})
+def search_by_name(request: Request, nombre: str = Query(..., min_length=2), page: int = 1, page_size: int = DEFAULT_PAGE_SIZE):
     page = max(page, 1)
     page_size = min(max(page_size, 1), MAX_PAGE_SIZE)
     offset = (page - 1) * page_size
@@ -107,15 +107,15 @@ def list_by_field(field: str, value: str, page: int, page_size: int):
 
 
 @router.get("/estado/{estado}", response_model=PaginatedRucResponse)
-def get_by_estado(estado: str, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE):
+def get_by_estado(request: Request, estado: str, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE):
     return list_by_field("estado", estado.strip(), page, page_size)
 
 
 @router.get("/condicion/{condicion}", response_model=PaginatedRucResponse)
-def get_by_condicion(condicion: str, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE):
+def get_by_condicion(request: Request, condicion: str, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE):
     return list_by_field("condicion", condicion.strip(), page, page_size)
 
 
 @router.get("/ubigeo/{ubigeo}", response_model=PaginatedRucResponse)
-def get_by_ubigeo(ubigeo: str, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE):
+def get_by_ubigeo(request: Request, ubigeo: str, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE):
     return list_by_field("ubigeo", ubigeo.strip(), page, page_size)

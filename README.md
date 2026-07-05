@@ -52,8 +52,7 @@ sunat-api/
 ## 1. Clonar el repo
 
 ```bash
-git clone <tu-repo>
-cd api-ruc
+git clone https://github.com/CodeRED-95/api-ruc.git
 ```
 
 ## 2. Crear `.env`

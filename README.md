@@ -67,6 +67,45 @@ En Linux:
 cp .env.example .env
 ```
 
+## 2.1. Configuración del `.env`
+
+Edita el archivo `.env` con estos valores:
+
+```env
+DATABASE_URL=postgresql://sunat:TU_PASSWORD@postgres:5432/sunat
+REDIS_URL=redis://redis:6379/0
+REDIS_ENABLED=true
+CACHE_TTL_SECONDS=3600
+API_ADMIN_KEY=TU_CLAVE_ADMIN_LARGA
+HASH_SECRET=TU_SECRETO_LARGO_PARA_HASH
+TOKEN_LENGTH=64
+DEFAULT_DAILY_LIMIT=1000
+DEFAULT_MINUTE_LIMIT=60
+DEFAULT_PAGE_SIZE=50
+MAX_PAGE_SIZE=200
+DB_POOL_MIN_SIZE=5
+DB_POOL_MAX_SIZE=20
+PADRON_TABLE=padron_ruc
+PADRON_DELIMITER=|
+POSTGRES_DB=sunat
+POSTGRES_USER=sunat
+POSTGRES_PASSWORD=TU_PASSWORD
+```
+
+Valores recomendados:
+
+- `API_ADMIN_KEY`: una cadena larga y aleatoria
+- `HASH_SECRET`: una cadena larga y aleatoria distinta de `API_ADMIN_KEY`
+- `TOKEN_LENGTH`: `64` o superior
+- `DEFAULT_DAILY_LIMIT`: según tu plan de uso
+- `DEFAULT_MINUTE_LIMIT`: según tu capacidad de tráfico
+
+Si PostgreSQL corre en el mismo `docker-compose.yml`, normalmente no necesitas cambiar:
+
+- `POSTGRES_DB`
+- `POSTGRES_USER`
+- `REDIS_URL`
+
 ## 3. Generar `API_ADMIN_KEY`
 
 Puedes generar una clave larga con Python:
@@ -314,4 +353,3 @@ docker compose exec api python scripts/importar_padron.py /app/data/padron.txt
 - Los endpoints administrativos requieren `X-Admin-Key`.
 - La API corre en `8001`.
 - El contenedor también expone la UI web y pgAdmin.
-

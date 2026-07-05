@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Administración API Keys</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="page">
+    <section class="card hero">
+      <div>
+        <p class="eyebrow">Admin Web</p>
+        <h1>Generar API Keys</h1>
+        <p class="muted">La clave admin solo se usa en el navegador y no se guarda en el backend.</p>
+      </div>
+    </section>
+
+    <section class="card form-card">
+      <form id="admin-form">
+        <label>API Admin Key
+          <input id="adminKey" type="password" placeholder="API_ADMIN_KEY" required>
+        </label>
+        <label>Nombre
+          <input id="nombre" type="text" placeholder="cliente-a" required>
+        </label>
+        <label>Descripción
+          <input id="descripcion" type="text" placeholder="Acceso para cliente A">
+        </label>
+        <label>Límite diario
+          <input id="limiteDiario" type="number" min="1" value="1000">
+        </label>
+        <label>Límite por minuto
+          <input id="limiteMinuto" type="number" min="1" value="60">
+        </label>
+        <button type="submit">Generar token</button>
+      </form>
+    </section>
+
+    <section class="card result-card">
+      <div id="adminStatus" class="status muted">Listo para generar una clave.</div>
+      <pre id="adminOutput">{}</pre>
+    </section>
+  </main>
+  <script src="/static/admin-web.js"></script>
+</body>
+</html>

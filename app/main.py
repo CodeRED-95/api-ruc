@@ -4,6 +4,7 @@ from typing import Callable
 
 from fastapi import FastAPI, Request
 from fastapi.openapi.utils import get_openapi
+from fastapi.staticfiles import StaticFiles
 
 from app.database import healthcheck
 from app.routes.admin import router as admin_router
@@ -11,6 +12,7 @@ from app.routes.ruc import router as ruc_router
 from app.services.auth import init_settings
 from app.services.cache import ping as redis_ping
 from app.services.logging import register_log
+from app.web import router as web_router
 
 init_settings(os.getenv("HASH_SECRET", "change-me"))
 
@@ -22,6 +24,8 @@ app = FastAPI(
 
 app.include_router(ruc_router)
 app.include_router(admin_router)
+app.include_router(web_router)
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
 @app.middleware("http")

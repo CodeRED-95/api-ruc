@@ -1,20 +1,15 @@
 # SUNAT RUC API
 
-API profesional en FastAPI para consultar un padrón reducido de RUC de SUNAT con PostgreSQL y Redis.
+API de consulta de RUC con FastAPI, PostgreSQL, Redis, Docker Compose, autenticación por `X-API-Key` y panel web simple para consultas y administración básica.
 
-## Características
+## URLs
 
-- Consulta exacta por RUC
-- Búsqueda por razón social con índice de texto
-- Filtros por estado, condición y ubigeo
-- Paginación y límite por defecto
-- Autenticación obligatoria por `X-API-Key`
-- Administración por `X-Admin-Key`
-- Caché opcional en Redis para consultas por RUC
-- Importación masiva con `COPY`
-- Swagger automático en `/docs`
+- API docs: `http://localhost:8001/docs`
+- Web de consulta: `http://localhost:8001/web`
+- Admin web: `http://localhost:8001/admin-web`
+- pgAdmin: `http://localhost:8080`
 
-## Estructura
+## Estructura principal
 
 ```text
 sunat-api/
@@ -23,10 +18,21 @@ sunat-api/
 │   ├── database.py
 │   ├── models.py
 │   ├── schemas.py
+│   ├── web.py
 │   ├── routes/
+│   │   ├── admin.py
 │   │   └── ruc.py
-│   └── services/
-│       └── cache.py
+│   ├── services/
+│   │   ├── auth.py
+│   │   ├── cache.py
+│   │   └── logging.py
+│   ├── static/
+│   │   ├── styles.css
+│   │   ├── web.js
+│   │   └── admin-web.js
+│   └── templates/
+│       ├── web.html
+│       └── admin_web.html
 ├── scripts/
 │   └── importar_padron.py
 ├── sql/
@@ -34,239 +40,279 @@ sunat-api/
 ├── Dockerfile
 ├── docker-compose.yml
 ├── requirements.txt
-├── .env.example
-└── README.md
+└── .env.example
 ```
 
 ## Requisitos
 
 - Docker
 - Docker Compose
-- Archivo TXT/CSV del padrón reducido de SUNAT
+- Archivo `padron.txt` o equivalente del padrón reducido SUNAT
 
-## Paso 1. Preparar variables
+## 1. Clonar el repo
+
+```bash
+git clone <tu-repo>
+cd api-ruc
+```
+
+## 2. Crear `.env`
+
+```bash
+copy .env.example .env
+```
+
+En Linux:
 
 ```bash
 cp .env.example .env
 ```
 
-Ajusta como mínimo:
+## 3. Generar `API_ADMIN_KEY`
 
-- `POSTGRES_PASSWORD`
+Puedes generar una clave larga con Python:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(64))"
+```
+
+## 4. Generar `HASH_SECRET`
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(64))"
+```
+
+Pega ambos valores en `.env`:
+
 - `API_ADMIN_KEY`
 - `HASH_SECRET`
 
-Si quieres, también ajusta:
-
-- `DEFAULT_DAILY_LIMIT`
-- `DEFAULT_MINUTE_LIMIT`
-- `TOKEN_LENGTH`
-- `DEFAULT_PAGE_SIZE`
-- `MAX_PAGE_SIZE`
-
-## Paso 2. Levantar PostgreSQL y Redis
+## 5. Levantar Docker Compose
 
 ```bash
-docker compose up -d postgres redis
+docker compose up -d --build
 ```
 
-## Paso 3. Crear el esquema
+Servicios:
 
-El esquema se carga automáticamente desde `sql/schema.sql` cuando PostgreSQL inicia por primera vez.
+- API: `8001`
+- PostgreSQL: `5432`
+- Redis: `6379`
+- pgAdmin: `8080`
 
-Si ya levantaste la base sin esquema, ejecuta:
+## 6. Probar Swagger
 
 ```bash
-docker exec -i sunat-postgres psql -U sunat -d sunat < sql/schema.sql
+curl http://localhost:8001/docs
 ```
 
-## Paso 4. Importar el padrón
+O abre:
 
-Monta el archivo del padrón dentro del contenedor o ejecútalo localmente con acceso a la misma base.
+```text
+http://localhost:8001/docs
+```
 
-Ejemplo desde tu máquina:
+## 7. Subir el padrón
+
+Crea la carpeta local `data` en el proyecto y copia ahí el archivo:
+
+```text
+data/padron.txt
+```
+
+Ese directorio se monta dentro del contenedor en `/app/data`.
+
+## 8. Importar el padrón
+
+Ejecuta:
 
 ```bash
-python -m pip install -r requirements.txt
-set DATABASE_URL=postgresql://sunat:sunat_password@localhost:5432/sunat
-python scripts/importar_padron.py C:\ruta\padron.txt
+docker compose exec api python scripts/importar_padron.py /app/data/padron.txt
 ```
 
-En Linux/Debian:
+El script:
+
+- limpia filas inválidas
+- usa `COPY`
+- muestra progreso
+
+## 9. Generar tokens
+
+Desde la web admin:
+
+```text
+http://localhost:8001/admin-web
+```
+
+O por API:
 
 ```bash
-export DATABASE_URL=postgresql://sunat:sunat_password@localhost:5432/sunat
-python3 scripts/importar_padron.py /ruta/padron.txt
-```
-
-La importación:
-
-- Limpia filas vacías o mal formateadas
-- Usa `COPY`
-- Muestra progreso
-- Inserta por lotes
-
-## Paso 5. Levantar la API
-
-```bash
-docker compose up -d api
-```
-
-Swagger:
-
-- `http://localhost:8000/docs`
-
-OpenAPI:
-
-- `http://localhost:8000/openapi.json`
-
-## Endpoints
-
-Todos los endpoints públicos de consulta requieren:
-
-```http
-X-API-Key: tu_token
-```
-
-Los endpoints administrativos requieren:
-
-```http
-X-Admin-Key: tu_clave_admin
-```
-
-### GET `/ruc/{ruc}`
-Consulta exacta por RUC.
-
-Ejemplo:
-
-```bash
-curl http://localhost:8000/ruc/20123456789
-```
-
-Ejemplo autenticado:
-
-```bash
-curl -H "X-API-Key: TU_API_KEY" http://localhost:8000/ruc/20123456789
-```
-
-### Python `requests`
-
-```python
-import requests
-
-response = requests.get(
-    "http://localhost:8000/ruc/20123456789",
-    headers={"X-API-Key": "TU_API_KEY"},
-    timeout=30,
-)
-print(response.status_code)
-print(response.json())
-```
-
-### JavaScript `fetch`
-
-```javascript
-const response = await fetch("http://localhost:8000/ruc/20123456789", {
-  headers: {
-    "X-API-Key": "TU_API_KEY",
-  },
-});
-
-const data = await response.json();
-console.log(response.status, data);
-```
-
-### GET `/buscar?nombre=texto`
-Busca por razón social.
-
-Ejemplo:
-
-```bash
-curl "http://localhost:8000/buscar?nombre=industria&page=1&page_size=20"
-```
-
-### GET `/estado/{estado}`
-Lista por estado.
-
-### GET `/condicion/{condicion}`
-Lista por condición.
-
-### GET `/ubigeo/{ubigeo}`
-Lista por ubigeo.
-
-### GET `/health`
-Verifica API y base de datos.
-
-## Respuestas
-
-- `200 OK` consulta exitosa
-- `401 Unauthorized` token inválido, ausente o desactivado
-- `404 Not Found` RUC no encontrado
-- `429 Too Many Requests` límite diario o por minuto excedido
-- `500 Internal Server Error` error inesperado
-
-## Endpoints administrativos
-
-- `POST /admin/api-keys`
-- `GET /admin/api-keys`
-- `GET /admin/api-keys/search?nombre=...`
-- `PATCH /admin/api-keys/{id}/activate`
-- `PATCH /admin/api-keys/{id}/deactivate`
-- `DELETE /admin/api-keys/{id}`
-- `POST /admin/api-keys/{id}/regenerate`
-- `GET /admin/api-keys/{id}/stats`
-- `GET /admin/api-keys/{id}/logs`
-
-## Ejemplo administrativo
-
-```bash
-curl -X POST http://localhost:8000/admin/api-keys \
+curl -X POST http://localhost:8001/admin/api-keys \
   -H "Content-Type: application/json" \
-  -H "X-Admin-Key: TU_ADMIN_KEY" \
+  -H "X-Admin-Key: TU_API_ADMIN_KEY" \
   -d '{
     "nombre": "cliente-a",
-    "descripcion": "Acceso para cliente A",
+    "descripcion": "Token para cliente A",
     "limite_diario": 5000,
     "limite_por_minuto": 120
   }'
 ```
 
-## Rendimiento
+La respuesta incluye la API Key generada una sola vez.
 
-- `ruc` es clave primaria
-- `estado`, `condicion` y `ubigeo` tienen índices B-Tree
-- `razon_social` usa `pg_trgm` para búsquedas tipo texto
-- Redis puede cachear consultas por RUC
-- La API usa pool de conexiones
-- Las búsquedas tienen `LIMIT` y `OFFSET`
+## 10. Probar consulta RUC
 
-## Actualizar padrón
+### curl
 
-Cuando SUNAT publique una nueva versión:
+```bash
+curl -H "X-API-Key: TU_API_KEY" http://localhost:8001/ruc/20123456789
+```
 
-1. Descarga el nuevo archivo
-2. Detén la API si lo prefieres, aunque no es obligatorio
-3. Ejecuta nuevamente el importador contra el archivo nuevo
-4. El script vacía la tabla y recarga el padrón
+### Python requests
 
-Si quieres una actualización más segura para producción, puedes adaptar el proceso a:
+```python
+import requests
 
-- Cargar en una tabla temporal
-- Validar conteos
-- Hacer swap de tablas en una transacción
+resp = requests.get(
+    "http://localhost:8001/ruc/20123456789",
+    headers={"X-API-Key": "TU_API_KEY"},
+    timeout=30,
+)
+print(resp.status_code)
+print(resp.json())
+```
 
-## Docker en Debian y Portainer
+### JavaScript fetch
 
-Puedes desplegar este proyecto como stack en Portainer usando el `docker-compose.yml`.
+```javascript
+const response = await fetch("http://localhost:8001/ruc/20123456789", {
+  headers: { "X-API-Key": "TU_API_KEY" }
+});
+console.log(await response.json());
+```
 
-Antes de subirlo:
+## 11. Usar la web
 
-- crea el archivo `.env`
-- asegúrate de montar el archivo del padrón para la importación
-- expón solo los puertos que necesites
+### Web de consulta
 
-## Notas importantes
+Abre:
 
-- El importador espera un delimitador `|` por defecto.
-- Si tu archivo usa otro delimitador, cambia `PADRON_DELIMITER`.
-- `pg_trgm` se crea antes de la tabla al iniciar PostgreSQL por primera vez; si ya existe el volumen, aplica el schema manualmente.
+```text
+http://localhost:8001/web
+```
+
+Ingresa:
+
+- tu `X-API-Key`
+- el RUC de 11 dígitos
+
+### Admin web
+
+Abre:
+
+```text
+http://localhost:8001/admin-web
+```
+
+Ingresa:
+
+- `API_ADMIN_KEY`
+- nombre del token
+- descripción opcional
+- límites diarios y por minuto
+
+## Ver PostgreSQL
+
+### Desde terminal
+
+```bash
+docker exec -it sunat-postgres psql -U sunat -d sunat
+```
+
+Dentro de `psql`:
+
+```sql
+SELECT COUNT(*) FROM padron_ruc;
+```
+
+### pgAdmin
+
+Abre:
+
+```text
+http://localhost:8080
+```
+
+Credenciales:
+
+- Email: `admin@admin.com`
+- Password: `admin123`
+
+Para conectar a PostgreSQL desde pgAdmin:
+
+- Host: `postgres`
+- Puerto: `5432`
+- DB: `sunat`
+- User: `sunat`
+- Password: la de tu `.env`
+
+## Comandos útiles
+
+Ver logs:
+
+```bash
+docker logs sunat-api --tail=100
+```
+
+Entrar a PostgreSQL:
+
+```bash
+docker exec -it sunat-postgres psql -U sunat -d sunat
+```
+
+Contar registros:
+
+```sql
+SELECT COUNT(*) FROM padron_ruc;
+```
+
+Probar docs:
+
+```bash
+curl http://localhost:8001/docs
+```
+
+Importar padrón:
+
+```bash
+docker compose exec api python scripts/importar_padron.py /app/data/padron.txt
+```
+
+## Endpoints principales
+
+- `GET /ruc/{ruc}`
+- `GET /buscar?nombre=texto`
+- `GET /estado/{estado}`
+- `GET /condicion/{condicion}`
+- `GET /ubigeo/{ubigeo}`
+- `GET /health`
+
+## Endpoints administrativos
+
+- `POST /admin/api-keys`
+- `GET /admin/api-keys`
+- `GET /admin/api-keys/search`
+- `PATCH /admin/api-keys/{api_key_id}/activate`
+- `PATCH /admin/api-keys/{api_key_id}/deactivate`
+- `DELETE /admin/api-keys/{api_key_id}`
+- `POST /admin/api-keys/{api_key_id}/regenerate`
+- `GET /admin/api-keys/{api_key_id}/stats`
+- `GET /admin/api-keys/{api_key_id}/logs`
+
+## Notas
+
+- Todos los endpoints de consulta requieren `X-API-Key`.
+- Los endpoints administrativos requieren `X-Admin-Key`.
+- La API corre en `8001`.
+- El contenedor también expone la UI web y pgAdmin.
+

@@ -136,7 +136,15 @@ Servicios:
 - API: `8001`
 - PostgreSQL: `5432`
 - Redis: `6379`
-- pgAdmin: `8080`
+- pgAdmin: `8081`
+
+Redis queda accesible solo dentro de la red Docker. La API sigue usando:
+
+```env
+REDIS_URL=redis://redis:6379/0
+```
+
+No expongas Redis a Internet ni publiques `6379:6379` en `docker-compose.yml`.
 
 ## 6. Probar Swagger
 
@@ -420,13 +428,15 @@ SELECT COUNT(*) FROM padron_ruc;
 Abre:
 
 ```text
-http://localhost:8080
+http://localhost:8081
 ```
 
 Credenciales:
 
 - Email: `admin@admin.com`
 - Password: `admin123`
+
+Si el puerto `8081` está ocupado, cambia el mapeo en `docker-compose.yml` a otro puerto libre, por ejemplo `8082:80`.
 
 Para conectar a PostgreSQL desde pgAdmin:
 
@@ -462,6 +472,30 @@ Probar docs:
 curl http://localhost:8001/docs
 ```
 
+Validar configuración Docker:
+
+```bash
+docker compose config
+```
+
+Ver contenedores:
+
+```bash
+docker ps
+```
+
+Ver logs de Redis:
+
+```bash
+docker logs sunat-redis --tail=100
+```
+
+Confirmar que Redis no está publicado al host:
+
+```text
+No debe aparecer 0.0.0.0:6379->6379/tcp en docker ps
+```
+
 Importar padrón:
 
 ```bash
@@ -495,3 +529,21 @@ docker compose exec api python scripts/importar_padron.py /app/data/padron.txt
 - Los endpoints administrativos requieren `X-Admin-Key`.
 - La API corre en `8001`.
 - El contenedor también expone la UI web y pgAdmin.
+- Redis no debe tener `ports` publicados si solo lo consume la API.
+- PostgreSQL idealmente no debería exponerse si solo lo usa la API.
+- pgAdmin debe usarse en red local o detrás de autenticación.
+- Cambia las contraseñas por defecto antes de producción.
+- No subas tu `.env` real a GitHub.
+
+## Solución para `vm.overcommit_memory`
+
+Si Redis muestra advertencias durante persistencia o replicación, habilita el overcommit de memoria en el host Debian:
+
+```bash
+cat /proc/sys/vm/overcommit_memory
+sudo sysctl vm.overcommit_memory=1
+echo "vm.overcommit_memory = 1" | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+```
+
+Esto evita errores de Redis durante guardado en segundo plano o replicación.

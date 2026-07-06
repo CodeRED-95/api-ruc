@@ -163,14 +163,23 @@ async function runAction(action, id) {
   };
   const item = map[action];
   if (!item) return;
-  if (action === "delete" && !confirm("¿Eliminar este token?")) return;
+  if (action === "delete") {
+    const confirmDelete = confirm(
+      "¿Está seguro de eliminar esta API?\n\nEsta acción eliminará permanentemente la API Key y no podrá recuperarse."
+    );
+    if (!confirmDelete) return;
+  }
   if (action === "refresh") {
     const token = await apiFetch(item.url, { method: item.method });
     setStatus(`Token ${id} actualizado.`);
     return token;
   }
   await apiFetch(item.url, { method: item.method });
-  setStatus(`Acción aplicada: ${action} sobre token ${id}.`);
+  if (action === "delete") {
+    setStatus("API eliminada correctamente.");
+  } else {
+    setStatus(`Acción aplicada: ${action} sobre token ${id}.`);
+  }
   await loadTokens();
 }
 
@@ -181,6 +190,10 @@ tokensBody.addEventListener("click", async (event) => {
   try {
     await runAction(action, id);
   } catch (error) {
+    if (action === "delete") {
+      setStatus("No fue posible eliminar la API.", true);
+      return;
+    }
     setStatus(error.message, true);
   }
 });

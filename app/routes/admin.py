@@ -186,18 +186,10 @@ def delete_token(token_id: int = None, api_key_id: int = None):
     token_id = token_id if token_id is not None else api_key_id
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE api_keys
-                SET deleted_at = %s,
-                    activo = FALSE,
-                    disabled_at = COALESCE(disabled_at, %s)
-                WHERE id = %s AND deleted_at IS NULL
-                """,
-                (datetime.now(timezone.utc), datetime.now(timezone.utc), token_id),
-            )
-            if cur.rowcount == 0:
+            cur.execute("SELECT 1 FROM api_keys WHERE id = %s", (token_id,))
+            if cur.fetchone() is None:
                 raise HTTPException(status_code=404, detail="Token no encontrado")
+            cur.execute("DELETE FROM api_keys WHERE id = %s", (token_id,))
     return {"deleted": True, "id": token_id}
 
 

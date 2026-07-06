@@ -41,7 +41,7 @@ CREATE INDEX IF NOT EXISTS idx_api_keys_deleted_at ON api_keys (deleted_at);
 
 CREATE TABLE IF NOT EXISTS api_logs (
     id BIGSERIAL PRIMARY KEY,
-    api_key_id BIGINT REFERENCES api_keys(id) ON DELETE SET NULL,
+    api_key_id BIGINT REFERENCES api_keys(id) ON DELETE CASCADE,
     ruc_consultado CHAR(11),
     endpoint TEXT NOT NULL,
     metodo VARCHAR(10) NOT NULL,
@@ -57,6 +57,15 @@ CREATE INDEX IF NOT EXISTS idx_api_logs_api_key_id ON api_logs (api_key_id);
 CREATE INDEX IF NOT EXISTS idx_api_logs_ruc_consultado ON api_logs (ruc_consultado);
 CREATE INDEX IF NOT EXISTS idx_api_logs_fecha ON api_logs (fecha DESC);
 CREATE INDEX IF NOT EXISTS idx_api_logs_codigo_http ON api_logs (codigo_http);
+
+ALTER TABLE api_logs
+    DROP CONSTRAINT IF EXISTS api_logs_api_key_id_fkey;
+
+ALTER TABLE api_logs
+    ADD CONSTRAINT api_logs_api_key_id_fkey
+    FOREIGN KEY (api_key_id)
+    REFERENCES api_keys(id)
+    ON DELETE CASCADE;
 
 ALTER TABLE api_keys
     ADD COLUMN IF NOT EXISTS token_preview TEXT,

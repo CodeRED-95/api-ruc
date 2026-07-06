@@ -238,6 +238,18 @@ O una sola vez:
 docker compose run --rm importer
 ```
 
+### Forzar importación
+
+```bash
+docker compose run --rm -e IMPORT_FORCE=true importer
+```
+
+O:
+
+```bash
+docker compose run --rm importer python scripts/importar_padron_fast.py /app/data/padron.txt --force
+```
+
 ### Ver progreso
 
 ```bash
@@ -288,6 +300,21 @@ Dentro de `psql`:
 SELECT COUNT(*) FROM padron_ruc;
 ```
 
+### Ver historial de importaciones
+
+```sql
+SELECT * FROM import_history ORDER BY created_at DESC;
+```
+
+### Ver últimas importaciones completadas
+
+```sql
+SELECT file_name, file_size, status, rows_imported, import_finished_at
+FROM import_history
+ORDER BY created_at DESC
+LIMIT 5;
+```
+
 ## 11. Importador rápido
 
 El script principal para cargas grandes es:
@@ -302,6 +329,7 @@ Qué hace:
 - crea una tabla staging temporal sin índices
 - usa `COPY` para cargar rápido
 - soporta `latin-1`
+- calcula una firma rápida del archivo para evitar reimportaciones idénticas
 - ignora columnas extra del archivo
 - limpia registros inválidos
 - salta RUC inválidos
@@ -333,6 +361,9 @@ IMPORT_SKIP_ERRORS=true
 IMPORT_LOG_ERRORS=true
 IMPORT_ENCODING=latin-1
 IMPORT_ERRORS_FILE=logs/importacion_padron.log
+IMPORT_SIGNATURE_HEAD_BYTES=1048576
+IMPORT_SIGNATURE_TAIL_BYTES=1048576
+IMPORT_FORCE=false
 ```
 
 ### Notas
@@ -341,6 +372,8 @@ IMPORT_ERRORS_FILE=logs/importacion_padron.log
 - `IMPORT_SKIP_ERRORS=true` evita que una línea inválida detenga toda la carga
 - `IMPORT_LOG_ERRORS=true` guarda errores en archivo
 - `IMPORT_ENCODING=latin-1` es la opción recomendada para el padrón SUNAT
+- `IMPORT_SIGNATURE_HEAD_BYTES` y `IMPORT_SIGNATURE_TAIL_BYTES` ajustan la huella rápida del archivo
+- `IMPORT_FORCE=true` fuerza la importación aunque el archivo parezca igual
 
 ## 13. Revisar errores de importación
 
@@ -361,6 +394,19 @@ Cada error registra:
 - número de línea
 - motivo
 - contenido de la línea si es posible
+
+El historial de importación queda guardado en:
+
+```text
+import_history
+```
+
+Estados disponibles:
+
+- `running`
+- `completed`
+- `failed`
+- `skipped`
 
 ## 14. API
 

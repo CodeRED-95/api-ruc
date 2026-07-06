@@ -63,3 +63,22 @@ ALTER TABLE api_keys
     ADD COLUMN IF NOT EXISTS total_requests BIGINT NOT NULL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS import_history (
+    id BIGSERIAL PRIMARY KEY,
+    file_name TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    file_size BIGINT NOT NULL,
+    file_mtime TIMESTAMPTZ NOT NULL,
+    signature_hash CHAR(64) NOT NULL,
+    import_started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    import_finished_at TIMESTAMPTZ,
+    status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'skipped')),
+    rows_imported BIGINT NOT NULL DEFAULT 0,
+    rows_skipped BIGINT NOT NULL DEFAULT 0,
+    error_message TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_import_history_signature ON import_history (file_size, file_mtime, signature_hash, status);
+CREATE INDEX IF NOT EXISTS idx_import_history_created_at ON import_history (created_at DESC);

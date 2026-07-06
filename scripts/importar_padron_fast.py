@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import os
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime
+from datetime import timezone
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -22,6 +25,9 @@ IMPORT_ENCODING = os.getenv("IMPORT_ENCODING", "latin-1")
 IMPORT_LOG_ERRORS = os.getenv("IMPORT_LOG_ERRORS", "true").lower() == "true"
 IMPORT_ERRORS_FILE = os.getenv("IMPORT_ERRORS_FILE", "logs/importacion_padron.log")
 IMPORT_SKIP_ERRORS = os.getenv("IMPORT_SKIP_ERRORS", "true").lower() == "true"
+IMPORT_SIGNATURE_HEAD_BYTES = int(os.getenv("IMPORT_SIGNATURE_HEAD_BYTES", "1048576"))
+IMPORT_SIGNATURE_TAIL_BYTES = int(os.getenv("IMPORT_SIGNATURE_TAIL_BYTES", "1048576"))
+IMPORT_FORCE = os.getenv("IMPORT_FORCE", "false").lower() == "true"
 
 STAGING_TABLE = f"{PADRON_TABLE}_staging"
 EXPECTED_OUTPUT_COLUMNS = 9
@@ -46,6 +52,15 @@ class Stats:
     @property
     def speed(self) -> float:
         return self.imported / self.elapsed_seconds if self.elapsed_seconds > 0 else 0.0
+
+
+@dataclass
+class FileMeta:
+    file_name: str
+    file_path: str
+    file_size: int
+    file_mtime: datetime
+    signature_hash: str
 
 
 def configure_csv_limits() -> None:
@@ -83,11 +98,57 @@ def write_log(handle, line_no: int, reason: str, raw_line: str | None = None) ->
     handle.flush()
 
 
+def write_info(handle, message: str) -> None:
+    if handle is None:
+        return
+    handle.write(f"{message}\n")
+    handle.flush()
+
+
 def validate_input_file(path: Path) -> None:
     if not path.exists():
         raise FileNotFoundError(f"Archivo no encontrado: {path}")
     if path.stat().st_size == 0:
         raise ValueError("El archivo está vacío")
+
+
+def build_quick_signature(path: Path) -> FileMeta:
+    stat_result = path.stat()
+    file_size = stat_result.st_size
+    file_mtime = datetime.fromtimestamp(stat_result.st_mtime, tz=timezone.utc)
+    head_bytes = max(0, IMPORT_SIGNATURE_HEAD_BYTES)
+    tail_bytes = max(0, IMPORT_SIGNATURE_TAIL_BYTES)
+
+    with path.open("rb") as f:
+        head = f.read(head_bytes)
+        tail = b""
+        if tail_bytes > 0 and file_size > tail_bytes:
+            try:
+                f.seek(max(file_size - tail_bytes, 0))
+                tail = f.read(tail_bytes)
+            except OSError:
+                tail = b""
+        elif tail_bytes > 0:
+            remaining = f.read()
+            tail = remaining[-tail_bytes:] if remaining else b""
+
+    signature_parts = [
+        str(path.resolve()),
+        path.name,
+        str(file_size),
+        file_mtime,
+        head.hex(),
+        tail.hex(),
+    ]
+    signature_source = "|".join(signature_parts).encode("utf-8", errors="ignore")
+    signature_hash = hashlib.sha256(signature_source).hexdigest()
+    return FileMeta(
+        file_name=path.name,
+        file_path=str(path.resolve()),
+        file_size=file_size,
+        file_mtime=file_mtime,
+        signature_hash=signature_hash,
+    )
 
 
 def detect_delimiter(sample: str, configured: str) -> str:
@@ -193,6 +254,41 @@ def create_staging_table(conn) -> None:
         )
 
 
+def ensure_import_history_table(conn) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS import_history (
+                id BIGSERIAL PRIMARY KEY,
+                file_name TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                file_size BIGINT NOT NULL,
+                file_mtime TIMESTAMPTZ NOT NULL,
+                signature_hash CHAR(64) NOT NULL,
+                import_started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                import_finished_at TIMESTAMPTZ,
+                status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'skipped')),
+                rows_imported BIGINT NOT NULL DEFAULT 0,
+                rows_skipped BIGINT NOT NULL DEFAULT 0,
+                error_message TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_import_history_signature
+            ON import_history (file_size, file_mtime, signature_hash, status)
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_import_history_created_at
+            ON import_history (created_at DESC)
+            """
+        )
+
+
 def load_batch_to_staging(conn, batch: list[list[str]]) -> None:
     if not batch:
         return
@@ -276,6 +372,65 @@ def create_indexes(conn) -> None:
         )
 
 
+def get_last_completed_import(conn, meta: FileMeta):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id
+            FROM import_history
+            WHERE file_size = %s
+              AND file_mtime = %s
+              AND signature_hash = %s
+              AND status = 'completed'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (meta.file_size, meta.file_mtime, meta.signature_hash),
+        )
+        return cur.fetchone()
+
+
+def insert_import_history(conn, meta: FileMeta, status: str, rows_imported: int = 0, rows_skipped: int = 0, error_message: str | None = None):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO import_history (
+                file_name, file_path, file_size, file_mtime, signature_hash,
+                import_started_at, status, rows_imported, rows_skipped, error_message
+            ) VALUES (%s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                meta.file_name,
+                meta.file_path,
+                meta.file_size,
+                meta.file_mtime,
+                meta.signature_hash,
+                status,
+                rows_imported,
+                rows_skipped,
+                error_message,
+            ),
+        )
+        return cur.fetchone()[0]
+
+
+def update_import_history(conn, history_id: int, status: str, stats: Stats, error_message: str | None = None):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE import_history
+            SET import_finished_at = NOW(),
+                status = %s,
+                rows_imported = %s,
+                rows_skipped = %s,
+                error_message = %s
+            WHERE id = %s
+            """,
+            (status, stats.imported, stats.skipped, error_message, history_id),
+        )
+
+
 def log_progress(stats: Stats, pbar) -> None:
     pbar.set_postfix(
         importadas=stats.imported,
@@ -305,6 +460,7 @@ def main() -> int:
     configure_csv_limits()
     ensure_dirs()
 
+    force = IMPORT_FORCE or "--force" in sys.argv[2:]
     input_file = Path(sys.argv[1])
     try:
         validate_input_file(input_file)
@@ -316,15 +472,18 @@ def main() -> int:
     error_log = open_error_log()
 
     try:
+        write_info(error_log, "Verificando firma rápida del archivo...")
+        meta = build_quick_signature(input_file)
+        write_info(
+            error_log,
+            f"Archivo detectado: {meta.file_name} | size={meta.file_size} | mtime={meta.file_mtime} | signature={meta.signature_hash}",
+        )
+
         try:
             with input_file.open("r", encoding=IMPORT_ENCODING, errors="strict", newline="") as probe:
-                total_lines = sum(1 for _ in probe)
+                probe.readline()
         except UnicodeDecodeError as exc:
             print(f"ERROR: codificación inválida. Revisa IMPORT_ENCODING={IMPORT_ENCODING}. Detalle: {exc}")
-            return 1
-
-        if total_lines == 0:
-            print("ERROR: El archivo está vacío")
             return 1
 
         batch_size = max(1, int(IMPORT_BATCH_SIZE))
@@ -332,11 +491,32 @@ def main() -> int:
 
         with psycopg.connect(DATABASE_URL) as conn:
             conn.autocommit = False
+            ensure_import_history_table(conn)
+            conn.commit()
+
+            last_completed = None if force else get_last_completed_import(conn, meta)
+            if last_completed:
+                message = "El archivo ya fue importado anteriormente.\nImportación omitida."
+                print(message)
+                write_info(error_log, "Archivo ya importado. Se omite la importación.")
+                skipped_history_id = insert_import_history(conn, meta, "skipped")
+                conn.commit()
+                update_import_history(conn, skipped_history_id, "skipped", stats, "Archivo idéntico previamente importado")
+                conn.commit()
+                print_summary(stats, IMPORT_ERRORS_FILE if IMPORT_LOG_ERRORS else "deshabilitado")
+                return 0
+
+            write_info(error_log, "Nueva versión detectada. Iniciando importación...")
+            history_id = insert_import_history(conn, meta, "running")
+            conn.commit()
+
+            if force:
+                write_info(error_log, "IMPORT_FORCE activo. Se ejecutará la importación aunque el archivo parezca el mismo.")
+
             create_staging_table(conn)
             conn.commit()
 
             with tqdm(
-                total=total_lines,
                 desc="Importando padrón",
                 unit="líneas",
                 dynamic_ncols=True,
@@ -362,7 +542,7 @@ def main() -> int:
                 cur.execute(sql.SQL("TRUNCATE TABLE {}").format(sql.Identifier(PADRON_TABLE)))
             conn.commit()
 
-            inserted = insert_from_staging(conn)
+            insert_from_staging(conn)
             conn.commit()
             with conn.cursor() as cur:
                 cur.execute(sql.SQL("SELECT COUNT(*) FROM {}").format(sql.Identifier(PADRON_TABLE)))
@@ -373,6 +553,9 @@ def main() -> int:
 
             with conn.cursor() as cur:
                 cur.execute(sql.SQL("DROP TABLE IF EXISTS {}").format(sql.Identifier(STAGING_TABLE)))
+            conn.commit()
+
+            update_import_history(conn, history_id, "completed", stats)
             conn.commit()
 
         if error_log:
@@ -387,6 +570,15 @@ def main() -> int:
         print(f"Velocidad: {stats.speed:.2f} registros/segundo")
         return 0
     except Exception as exc:
+        try:
+            if "history_id" in locals():
+                with psycopg.connect(DATABASE_URL) as fail_conn:
+                    fail_conn.autocommit = False
+                    ensure_import_history_table(fail_conn)
+                    update_import_history(fail_conn, history_id, "failed", stats, str(exc))
+                    fail_conn.commit()
+        except Exception:
+            pass
         print(f"ERROR: {exc}")
         return 1
     finally:

@@ -39,6 +39,9 @@ class Stats:
     imported: int = 0
     skipped: int = 0
     errors: int = 0
+    invalid_ruc: int = 0
+    empty_reason: int = 0
+    column_errors: int = 0
     start_time: float = 0.0
 
     @property
@@ -167,31 +170,42 @@ def clean_value(value: Optional[str]) -> str:
     return "" if value in {"-", "NULL", "null"} else value
 
 
-def normalize_record(row: list[str]) -> list[str] | None:
-    if len(row) < 5:
+def is_invalid_empty_token(value: str) -> bool:
+    token = clean_value(value)
+    return token == ""
+
+
+def sanitize_token(value: Optional[str], default: str = "") -> str:
+    token = clean_value(value)
+    return token if token != "" else default
+
+
+def normalize_record(row: list[str], stats: Stats, line_no: int, error_log) -> list[str] | None:
+    if len(row) < 2:
+        stats.column_errors += 1
+        write_log(error_log, line_no, "Columnas inválidas o registro incompleto", "|".join(row))
         return None
 
-    ruc = clean_value(row[0])
-    razon_social = clean_value(row[1])
-    estado = clean_value(row[2])
-    condicion = clean_value(row[3])
-    ubigeo = clean_value(row[4])
+    padded = (row + [""] * 11)[:11]
+
+    ruc = sanitize_token(padded[0])
+    razon_social = sanitize_token(padded[1])
 
     if len(ruc) != 11 or not ruc.isdigit():
-        return None
-    if not razon_social:
+        stats.invalid_ruc += 1
         return None
 
-    # El archivo SUNAT trae más columnas que las necesarias.
-    # Tomamos las necesarias por posición real observada:
-    # 1 ruc, 2 razon_social, 3 estado, 4 condicion, 5 ubigeo
-    # Dirección suele estar distribuida en columnas de texto libre;
-    # para priorizar velocidad se usa la columna 8 si existe y, si no,
-    # se construye una dirección mínima con los datos de ubicación.
-    direccion = clean_value(row[7]) if len(row) > 7 else ""
-    provincia = clean_value(row[8]) if len(row) > 8 else ""
-    departamento = clean_value(row[9]) if len(row) > 9 else ""
-    distrito = clean_value(row[10]) if len(row) > 10 else ""
+    if not razon_social:
+        stats.empty_reason += 1
+        return None
+
+    estado = sanitize_token(padded[2])
+    condicion = sanitize_token(padded[3])
+    ubigeo = sanitize_token(padded[4])
+    direccion = sanitize_token(padded[7])
+    provincia = sanitize_token(padded[8])
+    departamento = sanitize_token(padded[9])
+    distrito = sanitize_token(padded[10])
 
     if not direccion:
         partes = [p for p in (provincia, departamento, distrito) if p]
@@ -218,15 +232,16 @@ def read_rows(path: Path, encoding: str, delimiter: str, stats: Stats, error_log
                 parsed = next(csv.reader([raw_line], delimiter=detected_delimiter))
             except csv.Error as exc:
                 stats.errors += 1
+                stats.column_errors += 1
                 write_log(error_log, line_no, f"Error CSV: {exc}", raw_line)
                 if IMPORT_SKIP_ERRORS:
                     continue
                 raise
 
-            normalized = normalize_record(parsed)
+            normalized = normalize_record(parsed, stats, line_no, error_log)
             if normalized is None:
                 stats.skipped += 1
-                reason = "RUC inválido" if parsed and (len(parsed[0].strip()) != 11 or not parsed[0].strip().isdigit()) else "Registro incompleto"
+                reason = "RUC inválido" if parsed and (len(clean_value(parsed[0])) != 11 or not clean_value(parsed[0]).isdigit()) else "Razón social vacía"
                 write_log(error_log, line_no, reason, raw_line)
                 continue
             yield normalized
@@ -316,15 +331,15 @@ def insert_from_staging(conn) -> int:
                 INSERT INTO {}
                 (ruc, razon_social, estado, condicion, ubigeo, direccion, provincia, departamento, distrito)
                 SELECT DISTINCT ON (s.ruc)
-                    s.ruc,
-                    s.razon_social,
-                    s.estado,
-                    s.condicion,
-                    s.ubigeo,
-                    s.direccion,
-                    s.provincia,
-                    s.departamento,
-                    s.distrito
+                    NULLIF(TRIM(s.ruc), '') AS ruc,
+                    NULLIF(TRIM(s.razon_social), '') AS razon_social,
+                    COALESCE(NULLIF(TRIM(s.estado), ''), '') AS estado,
+                    COALESCE(NULLIF(TRIM(s.condicion), ''), '') AS condicion,
+                    COALESCE(NULLIF(TRIM(s.ubigeo), ''), '') AS ubigeo,
+                    COALESCE(NULLIF(TRIM(s.direccion), ''), '') AS direccion,
+                    COALESCE(NULLIF(TRIM(s.provincia), ''), '') AS provincia,
+                    COALESCE(NULLIF(TRIM(s.departamento), ''), '') AS departamento,
+                    COALESCE(NULLIF(TRIM(s.distrito), ''), '') AS distrito
                 FROM {}
                 s
                 WHERE s.ruc IS NOT NULL
@@ -445,6 +460,9 @@ def print_summary(stats: Stats, error_file: str) -> None:
     print(f"Tiempo: {stats.minutes:.2f} minutos")
     print(f"Filas importadas: {stats.imported}")
     print(f"Errores: {stats.errors}")
+    print(f"RUC inválidos: {stats.invalid_ruc}")
+    print(f"Razones sociales vacías: {stats.empty_reason}")
+    print(f"Errores de columnas: {stats.column_errors}")
     print(f"Archivo de errores: {error_file}")
     print()
 
@@ -566,6 +584,9 @@ def main() -> int:
         print(f"Importadas: {stats.imported}")
         print(f"Ignoradas: {stats.skipped}")
         print(f"Errores: {stats.errors}")
+        print(f"RUC inválidos: {stats.invalid_ruc}")
+        print(f"Razones sociales vacías: {stats.empty_reason}")
+        print(f"Errores de columnas: {stats.column_errors}")
         print(f"Tiempo total: {stats.minutes:.2f} minutos")
         print(f"Velocidad: {stats.speed:.2f} registros/segundo")
         return 0

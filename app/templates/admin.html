@@ -47,8 +47,6 @@
         <button type="submit">Generar token</button>
       </form>
       <div id="createMessage" class="message muted">Listo para generar un token.</div>
-      <pre id="createdToken" class="token-box">{"api_key": ""}</pre>
-      <button id="copyCreatedToken" type="button" class="secondary">Copiar token generado</button>
     </section>
 
     <section class="panel">
@@ -64,7 +62,7 @@
               <th>Nombre</th>
               <th>Preview</th>
               <th>Estado</th>
-              <th>Requests</th>
+              <th>Total consultas</th>
               <th>Límite diario</th>
               <th>Límite minuto</th>
               <th>Creado</th>
@@ -80,6 +78,19 @@
     <section class="panel">
       <div id="status" class="message muted">Sin actividad.</div>
     </section>
+
+    <dialog id="tokenDialog" class="token-dialog">
+      <div class="token-dialog-body">
+        <p class="eyebrow">Token generado</p>
+        <h2>Este token solo se mostrará una vez</h2>
+        <p class="muted">Guárdelo en un lugar seguro.</p>
+        <pre id="tokenDialogText" class="token-box"></pre>
+        <div class="dialog-actions">
+          <button id="tokenDialogCopy" type="button">Copiar</button>
+          <button id="tokenDialogClose" type="button" class="secondary">Cerrar</button>
+        </div>
+      </div>
+    </dialog>
   </main>
   <script src="/static/admin.js"></script>
 </body>

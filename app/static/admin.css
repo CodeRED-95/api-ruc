@@ -133,6 +133,27 @@ th { color: var(--muted); font-weight: 700; }
   color: var(--muted);
   font-size: .92rem;
 }
+.token-dialog {
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: var(--card);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  width: min(720px, calc(100% - 2rem));
+  padding: 0;
+}
+.token-dialog::backdrop {
+  background: rgba(2, 6, 23, .72);
+}
+.token-dialog-body {
+  padding: 1.25rem;
+}
+.dialog-actions {
+  display: flex;
+  gap: .75rem;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
 code {
   background: rgba(15, 23, 42, .85);
   padding: .15rem .35rem;

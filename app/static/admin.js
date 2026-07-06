@@ -8,8 +8,10 @@ const createForm = el("createForm");
 const tokensBody = el("tokensBody");
 const statusBox = el("status");
 const createMessage = el("createMessage");
-const createdToken = el("createdToken");
-const copyCreatedTokenBtn = el("copyCreatedToken");
+const tokenDialog = el("tokenDialog");
+const tokenDialogText = el("tokenDialogText");
+const tokenDialogCopy = el("tokenDialogCopy");
+const tokenDialogClose = el("tokenDialogClose");
 const refreshBtn = el("refreshBtn");
 
 function setStatus(message, error = false) {
@@ -111,10 +113,8 @@ function tokenActions(token) {
   const enableAction = token.is_active ? "disable" : "enable";
   return `
     <div class="actions-cell">
-      <button type="button" data-action="copy" data-id="${token.id}" data-token="${token.token_preview || ""}">Copiar</button>
       <button type="button" data-action="${enableAction}" data-id="${token.id}">${enableLabel}</button>
       <button type="button" data-action="delete" data-id="${token.id}">Eliminar</button>
-      <button type="button" data-action="refresh" data-id="${token.id}">Refrescar</button>
     </div>
   `;
 }
@@ -148,7 +148,8 @@ async function createToken(payload) {
     method: "POST",
     body: JSON.stringify(payload),
   });
-  createdToken.textContent = JSON.stringify(token, null, 2);
+  tokenDialogText.textContent = token.api_key || "";
+  tokenDialog.showModal();
   setCreateMessage("Token generado correctamente.");
   await loadTokens();
 }
@@ -176,13 +177,8 @@ async function runAction(action, id) {
 tokensBody.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-action]");
   if (!button) return;
-  const { action, id, token } = button.dataset;
+  const { action, id } = button.dataset;
   try {
-    if (action === "copy") {
-      await copyText(token || "");
-      setStatus("Token copiado al portapapeles.");
-      return;
-    }
     await runAction(action, id);
   } catch (error) {
     setStatus(error.message, true);
@@ -212,11 +208,19 @@ refreshBtn.addEventListener("click", async () => {
     setStatus(error.message, true);
   }
 });
-copyCreatedTokenBtn.addEventListener("click", async () => {
+tokenDialogClose.addEventListener("click", () => {
+  tokenDialog.close();
+});
+tokenDialog.addEventListener("click", (event) => {
+  if (event.target === tokenDialog) {
+    tokenDialog.close();
+  }
+});
+tokenDialogCopy.addEventListener("click", async () => {
   try {
-    const data = JSON.parse(createdToken.textContent || "{}");
-    if (!data.api_key) throw new Error("No hay token para copiar");
-    await copyText(data.api_key);
+    const token = tokenDialogText.textContent || "";
+    if (!token) throw new Error("No hay token para copiar");
+    await copyText(token);
     setCreateMessage("Token generado copiado.");
   } catch (error) {
     setCreateMessage(error.message, true);

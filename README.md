@@ -532,7 +532,7 @@ Permite:
 - generar tokens
 - definir límites diario y por minuto
 - ver la tabla de tokens
-- copiar el token generado
+- ver el token completo solo al crearlo y copiarlo desde el diálogo
 - activar, desactivar, eliminar y refrescar tokens
 
 ## 17. Consultas de ejemplo

@@ -173,6 +173,60 @@ El script:
 - limpia filas inválidas
 - usa `COPY`
 - muestra progreso
+- registra errores en `logs/import_errors.log`
+- tolera líneas corruptas sin detener toda la importación
+
+### Variables del importador
+
+Puedes ajustar el comportamiento con estas variables del `.env`:
+
+```env
+IMPORT_BATCH_SIZE=50000
+IMPORT_SKIP_ERRORS=true
+IMPORT_LOG_ERRORS=true
+IMPORT_ENCODING=utf-8
+IMPORT_ERRORS_FILE=logs/import_errors.log
+```
+
+Recomendaciones:
+
+- `IMPORT_BATCH_SIZE`: súbelo si tienes suficiente RAM y quieres menos copias a PostgreSQL
+- `IMPORT_SKIP_ERRORS=true`: evita que una línea corrupta detenga la importación
+- `IMPORT_LOG_ERRORS=true`: guarda el detalle de líneas fallidas
+- `IMPORT_ENCODING`: usa `utf-8` salvo que tu archivo real requiera otro encoding
+
+### Revisar errores
+
+```bash
+type logs\import_errors.log
+```
+
+En Linux:
+
+```bash
+cat logs/import_errors.log
+```
+
+### Reiniciar una importación
+
+Si quieres volver a importar desde cero:
+
+1. Corrige o reemplaza `data/padron.txt`
+2. Ejecuta nuevamente:
+
+```bash
+docker compose exec api python scripts/importar_padron.py /app/data/padron.txt
+```
+
+El script hace `TRUNCATE TABLE padron_ruc` antes de cargar, así que la tabla se recarga completa en cada ejecución.
+
+### Cambiar el tamaño del lote
+
+En `.env`:
+
+```env
+IMPORT_BATCH_SIZE=100000
+```
 
 ## 9. Generar tokens
 

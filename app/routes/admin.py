@@ -1,10 +1,13 @@
+from __future__ import annotations
+
 import os
 from datetime import datetime, timezone
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.database import get_conn
-from app.services.auth import generate_api_key, hash_api_key, validate_admin_key
+from app.services.auth import generate_api_key, hash_api_key, make_token_preview, validate_admin_key
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(validate_admin_key)])
 
@@ -13,152 +16,234 @@ DEFAULT_DAILY_LIMIT = int(os.getenv("DEFAULT_DAILY_LIMIT", "1000"))
 DEFAULT_MINUTE_LIMIT = int(os.getenv("DEFAULT_MINUTE_LIMIT", "60"))
 
 
-def _row_to_api_key(row):
-    return {
+def _row_to_token(row: tuple[Any, ...], include_hash: bool = False) -> dict:
+    base = {
         "id": row[0],
         "nombre": row[1],
-        "activo": row[3],
-        "descripcion": row[4],
-        "fecha_creacion": row[5],
-        "ultimo_uso": row[6],
-        "limite_diario": row[7],
-        "limite_por_minuto": row[8],
-        "consultas_realizadas": row[9],
-        "ultima_ip": row[10],
+        "token_preview": row[3],
+        "is_active": row[4],
+        "activo": row[4],
+        "descripcion": row[5],
+        "created_at": row[6],
+        "fecha_creacion": row[6],
+        "last_used_at": row[7],
+        "ultimo_uso": row[7],
+        "daily_limit": row[8],
+        "limite_diario": row[8],
+        "minute_limit": row[9],
+        "limite_por_minuto": row[9],
+        "total_requests": row[10],
+        "consultas_realizadas": row[10],
+        "last_ip": row[11],
+        "disabled_at": row[12],
+        "deleted_at": row[13],
     }
+    if include_hash:
+        base["token_hash"] = row[2]
+    return base
 
 
+def _token_stats(conn, token_id: int) -> dict:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                COUNT(*) FILTER (WHERE fecha >= date_trunc('day', now())) AS requests_today,
+                COUNT(*) FILTER (WHERE fecha >= date_trunc('minute', now())) AS requests_this_minute
+            FROM api_logs
+            WHERE api_key_id = %s
+            """,
+            (token_id,),
+        )
+        row = cur.fetchone()
+    return {"requests_today": row[0], "requests_this_minute": row[1]}
+
+
+def _get_token_row(conn, token_id: int) -> tuple[Any, ...] | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, nombre, api_key_hash, token_preview, activo, descripcion, fecha_creacion,
+                   ultimo_uso, limite_diario, limite_por_minuto, total_requests, ultima_ip,
+                   disabled_at, deleted_at
+            FROM api_keys
+            WHERE id = %s
+            """,
+            (token_id,),
+        )
+        return cur.fetchone()
+
+
+@router.post("/tokens")
 @router.post("/api-keys")
-def create_api_key(payload: dict):
-    nombre = payload.get("nombre")
+def create_token(payload: dict):
+    nombre = (payload.get("nombre") or "").strip()
     if not nombre:
         raise HTTPException(status_code=422, detail="nombre es obligatorio")
-    raw_key = generate_api_key(TOKEN_LENGTH)
-    key_hash = hash_api_key(raw_key)
+
+    raw_token = generate_api_key(TOKEN_LENGTH)
+    token_hash = hash_api_key(raw_token)
+    token_preview = make_token_preview(raw_token)
     descripcion = payload.get("descripcion")
-    limite_diario = payload.get("limite_diario", DEFAULT_DAILY_LIMIT)
-    limite_minuto = payload.get("limite_por_minuto", DEFAULT_MINUTE_LIMIT)
-    activo = payload.get("activo", True)
+    daily_limit = payload.get("daily_limit", payload.get("limite_diario", DEFAULT_DAILY_LIMIT))
+    minute_limit = payload.get("minute_limit", payload.get("limite_por_minuto", DEFAULT_MINUTE_LIMIT))
 
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO api_keys (
-                    nombre, api_key_hash, activo, descripcion, fecha_creacion,
-                    limite_diario, limite_por_minuto, consultas_realizadas
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, 0)
+                    nombre, api_key_hash, token_preview, activo, descripcion, fecha_creacion,
+                    limite_diario, limite_por_minuto, total_requests, consultas_realizadas
+                ) VALUES (%s, %s, %s, TRUE, %s, %s, %s, %s, 0, 0)
                 RETURNING id
                 """,
-                (nombre, key_hash, activo, descripcion, datetime.now(timezone.utc), limite_diario, limite_minuto),
+                (
+                    nombre,
+                    token_hash,
+                    token_preview,
+                    descripcion,
+                    datetime.now(timezone.utc),
+                    daily_limit,
+                    minute_limit,
+                ),
             )
-            api_key_id = cur.fetchone()[0]
-    return {"id": api_key_id, "api_key": raw_key}
+            token_id = cur.fetchone()[0]
+
+    return {
+        "id": token_id,
+        "api_key": raw_token,
+        "token_preview": token_preview,
+        "daily_limit": daily_limit,
+        "minute_limit": minute_limit,
+    }
 
 
+@router.get("/tokens")
 @router.get("/api-keys")
-def list_api_keys():
+def list_tokens():
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, nombre, api_key_hash, activo, descripcion, fecha_creacion,
-                       ultimo_uso, limite_diario, limite_por_minuto, consultas_realizadas, ultima_ip
+                SELECT id, nombre, api_key_hash, token_preview, activo, descripcion, fecha_creacion,
+                       ultimo_uso, limite_diario, limite_por_minuto, total_requests, ultima_ip,
+                       disabled_at, deleted_at
                 FROM api_keys
+                WHERE deleted_at IS NULL
                 ORDER BY id DESC
                 """
             )
             rows = cur.fetchall()
-    return [_row_to_api_key(row) for row in rows]
+    return [_row_to_token(row) for row in rows]
 
 
-@router.get("/api-keys/search")
-def search_api_keys(nombre: str):
+@router.get("/tokens/{token_id}")
+@router.get("/api-keys/{api_key_id}")
+def get_token(token_id: int = None, api_key_id: int = None):
+    token_id = token_id if token_id is not None else api_key_id
     with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, nombre, api_key_hash, activo, descripcion, fecha_creacion,
-                       ultimo_uso, limite_diario, limite_por_minuto, consultas_realizadas, ultima_ip
-                FROM api_keys
-                WHERE nombre ILIKE %s
-                ORDER BY id DESC
-                """,
-                (f"%{nombre}%",),
-            )
-            rows = cur.fetchall()
-    return [_row_to_api_key(row) for row in rows]
+        row = _get_token_row(conn, token_id)
+        if not row or row[13] is not None:
+            raise HTTPException(status_code=404, detail="Token no encontrado")
+        payload = _row_to_token(row)
+        payload.update(_token_stats(conn, token_id))
+    return payload
 
 
-def _set_active(api_key_id: int, activo: bool):
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("UPDATE api_keys SET activo = %s WHERE id = %s", (activo, api_key_id))
-    return {"id": api_key_id, "activo": activo}
-
-
-@router.patch("/api-keys/{api_key_id}/activate")
-def activate_api_key(api_key_id: int):
-    return _set_active(api_key_id, True)
-
-
-@router.patch("/api-keys/{api_key_id}/deactivate")
-def deactivate_api_key(api_key_id: int):
-    return _set_active(api_key_id, False)
-
-
-@router.delete("/api-keys/{api_key_id}")
-def delete_api_key(api_key_id: int):
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM api_keys WHERE id = %s", (api_key_id,))
-    return {"deleted": True, "id": api_key_id}
-
-
-@router.post("/api-keys/{api_key_id}/regenerate")
-def regenerate_api_key(api_key_id: int):
-    raw_key = generate_api_key(TOKEN_LENGTH)
-    key_hash = hash_api_key(raw_key)
+def _set_active(token_id: int, active: bool):
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE api_keys
-                SET api_key_hash = %s
-                WHERE id = %s
+                SET activo = %s,
+                    disabled_at = CASE WHEN %s THEN NULL ELSE COALESCE(disabled_at, %s) END
+                WHERE id = %s AND deleted_at IS NULL
                 """,
-                (key_hash, api_key_id),
+                (active, active, datetime.now(timezone.utc), token_id),
             )
-    return {"id": api_key_id, "api_key": raw_key}
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Token no encontrado")
+    return {"id": token_id, "is_active": active}
 
 
-@router.get("/api-keys/{api_key_id}/stats")
-def api_key_stats(api_key_id: int):
+@router.patch("/tokens/{token_id}/disable")
+@router.patch("/api-keys/{api_key_id}/deactivate")
+def disable_token(token_id: int = None, api_key_id: int = None):
+    return _set_active(token_id if token_id is not None else api_key_id, False)
+
+
+@router.patch("/tokens/{token_id}/enable")
+@router.patch("/api-keys/{api_key_id}/activate")
+def enable_token(token_id: int = None, api_key_id: int = None):
+    return _set_active(token_id if token_id is not None else api_key_id, True)
+
+
+@router.delete("/tokens/{token_id}")
+@router.delete("/api-keys/{api_key_id}")
+def delete_token(token_id: int = None, api_key_id: int = None):
+    token_id = token_id if token_id is not None else api_key_id
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, nombre, api_key_hash, activo, descripcion, fecha_creacion,
-                       ultimo_uso, limite_diario, limite_por_minuto, consultas_realizadas, ultima_ip
-                FROM api_keys
+                UPDATE api_keys
+                SET deleted_at = %s,
+                    activo = FALSE,
+                    disabled_at = COALESCE(disabled_at, %s)
+                WHERE id = %s AND deleted_at IS NULL
+                """,
+                (datetime.now(timezone.utc), datetime.now(timezone.utc), token_id),
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Token no encontrado")
+    return {"deleted": True, "id": token_id}
+
+
+@router.post("/tokens/{token_id}/regenerate")
+@router.post("/api-keys/{api_key_id}/regenerate")
+def regenerate_token(token_id: int = None, api_key_id: int = None):
+    token_id = token_id if token_id is not None else api_key_id
+    raw_token = generate_api_key(TOKEN_LENGTH)
+    token_hash = hash_api_key(raw_token)
+    token_preview = make_token_preview(raw_token)
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE api_keys
+                SET api_key_hash = %s,
+                    token_preview = %s,
+                    deleted_at = NULL,
+                    activo = TRUE,
+                    disabled_at = NULL
                 WHERE id = %s
                 """,
-                (api_key_id,),
+                (token_hash, token_preview, token_id),
             )
-            row = cur.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="API key no encontrada")
-            cur.execute("SELECT COUNT(*) FROM api_logs WHERE api_key_id = %s", (api_key_id,))
-            total_logs = cur.fetchone()[0]
-            cur.execute("SELECT COUNT(*) FROM api_logs WHERE api_key_id = %s AND codigo_http = 200", (api_key_id,))
-            total_ok = cur.fetchone()[0]
-            cur.execute("SELECT COUNT(*) FROM api_logs WHERE api_key_id = %s AND codigo_http >= 400", (api_key_id,))
-            total_error = cur.fetchone()[0]
-    return {"api_key": _row_to_api_key(row), "logs": {"total": total_logs, "ok": total_ok, "error": total_error}}
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Token no encontrado")
+    return {"id": token_id, "api_key": raw_token, "token_preview": token_preview}
 
 
+@router.get("/tokens/{token_id}/stats")
+@router.get("/api-keys/{api_key_id}/stats")
+def token_stats(token_id: int = None, api_key_id: int = None):
+    token_id = token_id if token_id is not None else api_key_id
+    with get_conn() as conn:
+        row = _get_token_row(conn, token_id)
+        if not row or row[13] is not None:
+            raise HTTPException(status_code=404, detail="Token no encontrado")
+        token = _row_to_token(row)
+        token.update(_token_stats(conn, token_id))
+    return {"token": token}
+
+
+@router.get("/tokens/{token_id}/logs")
 @router.get("/api-keys/{api_key_id}/logs")
-def api_key_logs(api_key_id: int, limit: int = 100):
+def token_logs(token_id: int = None, api_key_id: int = None, limit: int = 100):
+    token_id = token_id if token_id is not None else api_key_id
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -170,7 +255,7 @@ def api_key_logs(api_key_id: int, limit: int = 100):
                 ORDER BY fecha DESC
                 LIMIT %s
                 """,
-                (api_key_id, min(limit, 500)),
+                (token_id, min(limit, 500)),
             )
             rows = cur.fetchall()
     return [
@@ -189,4 +274,3 @@ def api_key_logs(api_key_id: int, limit: int = 100):
         }
         for row in rows
     ]
-

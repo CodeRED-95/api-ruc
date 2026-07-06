@@ -385,6 +385,24 @@ Todos requieren:
 X-API-Key: TU_API_KEY
 ```
 
+También puedes autenticarte con:
+
+```http
+Authorization: Bearer TU_API_KEY
+```
+
+O con query params:
+
+```text
+/ruc/10452159428?apikey=TU_API_KEY
+```
+
+o:
+
+```text
+/ruc/10452159428?token=TU_API_KEY
+```
+
 ### Respuestas esperadas
 
 - `200 OK` consulta exitosa
@@ -397,9 +415,21 @@ X-API-Key: TU_API_KEY
 
 ### Endpoints administrativos
 
+- `POST /admin/tokens`
+- `GET /admin/tokens`
+- `GET /admin/tokens/{token_id}`
+- `PATCH /admin/tokens/{token_id}/disable`
+- `PATCH /admin/tokens/{token_id}/enable`
+- `DELETE /admin/tokens/{token_id}`
+- `POST /admin/tokens/{token_id}/regenerate`
+- `GET /admin/tokens/{token_id}/stats`
+- `GET /admin/tokens/{token_id}/logs`
+
+Compatibilidad conservada:
+
 - `POST /admin/api-keys`
 - `GET /admin/api-keys`
-- `GET /admin/api-keys/search`
+- `GET /admin/api-keys/{api_key_id}`
 - `PATCH /admin/api-keys/{api_key_id}/activate`
 - `PATCH /admin/api-keys/{api_key_id}/deactivate`
 - `DELETE /admin/api-keys/{api_key_id}`
@@ -452,9 +482,12 @@ http://localhost:8001/admin-web
 Permite:
 
 - ingresar `API_ADMIN_KEY`
+- guardar la clave localmente en el navegador
 - generar tokens
 - definir límites diario y por minuto
-- ver el token generado
+- ver la tabla de tokens
+- copiar el token generado
+- activar, desactivar, eliminar y refrescar tokens
 
 ## 17. Consultas de ejemplo
 
@@ -596,4 +629,3 @@ docker compose run --rm importer
 5. Revisa logs con `docker logs -f sunat-importer`
 6. Verifica `SELECT COUNT(*) FROM padron_ruc;`
 7. Consume la API en `http://localhost:8001/docs`
-

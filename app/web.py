@@ -14,4 +14,4 @@ def web_page(request: Request):
 
 @router.get("/admin-web", response_class=HTMLResponse)
 def admin_web_page(request: Request):
-    return templates.TemplateResponse("admin_web.html", {"request": request})
+    return templates.TemplateResponse("admin.html", {"request": request})

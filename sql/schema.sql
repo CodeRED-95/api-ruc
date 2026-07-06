@@ -21,18 +21,23 @@ CREATE TABLE IF NOT EXISTS api_keys (
     id BIGSERIAL PRIMARY KEY,
     nombre VARCHAR(150) NOT NULL UNIQUE,
     api_key_hash CHAR(64) NOT NULL UNIQUE,
+    token_preview TEXT,
     activo BOOLEAN NOT NULL DEFAULT TRUE,
     descripcion TEXT,
     fecha_creacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     ultimo_uso TIMESTAMPTZ,
     limite_diario INTEGER NOT NULL DEFAULT 1000,
     limite_por_minuto INTEGER NOT NULL DEFAULT 60,
+    total_requests BIGINT NOT NULL DEFAULT 0,
     consultas_realizadas BIGINT NOT NULL DEFAULT 0,
-    ultima_ip INET
+    ultima_ip INET,
+    disabled_at TIMESTAMPTZ,
+    deleted_at TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_api_keys_activo ON api_keys (activo);
 CREATE INDEX IF NOT EXISTS idx_api_keys_nombre_trgm ON api_keys USING gin (nombre gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_api_keys_deleted_at ON api_keys (deleted_at);
 
 CREATE TABLE IF NOT EXISTS api_logs (
     id BIGSERIAL PRIMARY KEY,
@@ -52,3 +57,9 @@ CREATE INDEX IF NOT EXISTS idx_api_logs_api_key_id ON api_logs (api_key_id);
 CREATE INDEX IF NOT EXISTS idx_api_logs_ruc_consultado ON api_logs (ruc_consultado);
 CREATE INDEX IF NOT EXISTS idx_api_logs_fecha ON api_logs (fecha DESC);
 CREATE INDEX IF NOT EXISTS idx_api_logs_codigo_http ON api_logs (codigo_http);
+
+ALTER TABLE api_keys
+    ADD COLUMN IF NOT EXISTS token_preview TEXT,
+    ADD COLUMN IF NOT EXISTS total_requests BIGINT NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;

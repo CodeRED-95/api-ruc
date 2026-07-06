@@ -51,6 +51,39 @@ function adminHeaders() {
   };
 }
 
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      alert("Copiado");
+      return true;
+    }
+
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+
+    const ok = document.execCommand("copy");
+    document.body.removeChild(textarea);
+
+    if (ok) {
+      alert("Copiado");
+      return true;
+    }
+
+    alert("No se pudo copiar. Selecciona el token y cópialo manualmente.");
+    return false;
+  } catch (error) {
+    alert("No se pudo copiar. Selecciona el token y cópialo manualmente.");
+    return false;
+  }
+}
+
 async function apiFetch(url, options = {}) {
   const headers = { ...(options.headers || {}), ...adminHeaders() };
   const response = await fetch(url, { ...options, headers });
@@ -146,7 +179,7 @@ tokensBody.addEventListener("click", async (event) => {
   const { action, id, token } = button.dataset;
   try {
     if (action === "copy") {
-      await navigator.clipboard.writeText(token || "");
+      await copyText(token || "");
       setStatus("Token copiado al portapapeles.");
       return;
     }
@@ -183,7 +216,7 @@ copyCreatedTokenBtn.addEventListener("click", async () => {
   try {
     const data = JSON.parse(createdToken.textContent || "{}");
     if (!data.api_key) throw new Error("No hay token para copiar");
-    await navigator.clipboard.writeText(data.api_key);
+    await copyText(data.api_key);
     setCreateMessage("Token generado copiado.");
   } catch (error) {
     setCreateMessage(error.message, true);

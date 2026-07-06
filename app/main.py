@@ -2,8 +2,9 @@ import os
 import time
 from typing import Callable
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.openapi.utils import get_openapi
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.database import healthcheck
@@ -22,6 +23,21 @@ app = FastAPI(
     description="API de alto volumen para consultar el padrón reducido de RUC de SUNAT.",
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://docs.codered.host",
+        "https://codered.host",
+    ],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(ruc_router)
 app.include_router(admin_router)
 app.include_router(web_router)
@@ -30,6 +46,9 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next: Callable):
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
     start = time.perf_counter()
     response = None
     status_code = 500
@@ -52,6 +71,11 @@ async def log_requests(request: Request, call_next: Callable):
             tiempo_respuesta_ms=elapsed_ms,
             origen=request.headers.get("origin"),
         )
+
+
+@app.options("/{full_path:path}")
+async def options_handler(full_path: str):
+    return Response(status_code=204)
 
 
 @app.get("/health")

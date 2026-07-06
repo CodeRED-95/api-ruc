@@ -175,17 +175,51 @@ El script:
 - muestra progreso
 - registra errores en `logs/import_errors.log`
 - tolera líneas corruptas sin detener toda la importación
+- soporta `latin-1`
+- crea una tabla staging temporal para acelerar la carga
+
+### Importación rápida en segundo plano
+
+Puedes lanzar el importador como servicio separado:
+
+```bash
+docker compose up -d importer
+```
+
+O ejecutarlo una sola vez:
+
+```bash
+docker compose run --rm importer
+```
+
+Ver avance:
+
+```bash
+docker logs -f sunat-importer
+```
+
+Detener importación:
+
+```bash
+docker stop sunat-importer
+```
+
+Verificar conteo final:
+
+```sql
+SELECT COUNT(*) FROM padron_ruc;
+```
 
 ### Variables del importador
 
 Puedes ajustar el comportamiento con estas variables del `.env`:
 
 ```env
-IMPORT_BATCH_SIZE=50000
+IMPORT_BATCH_SIZE=250000
 IMPORT_SKIP_ERRORS=true
 IMPORT_LOG_ERRORS=true
-IMPORT_ENCODING=utf-8
-IMPORT_ERRORS_FILE=logs/import_errors.log
+IMPORT_ENCODING=latin-1
+IMPORT_ERRORS_FILE=logs/importacion_padron.log
 ```
 
 Recomendaciones:
@@ -193,7 +227,23 @@ Recomendaciones:
 - `IMPORT_BATCH_SIZE`: súbelo si tienes suficiente RAM y quieres menos copias a PostgreSQL
 - `IMPORT_SKIP_ERRORS=true`: evita que una línea corrupta detenga la importación
 - `IMPORT_LOG_ERRORS=true`: guarda el detalle de líneas fallidas
-- `IMPORT_ENCODING`: usa `utf-8` salvo que tu archivo real requiera otro encoding
+- `IMPORT_ENCODING`: usa `latin-1` para el padrón SUNAT si trae caracteres extendidos
+
+### Estructura del archivo
+
+El importador usa solamente estas columnas reales del padrón:
+
+- `ruc` = columna 1
+- `razon_social` = columna 2
+- `estado` = columna 3
+- `condicion` = columna 4
+- `ubigeo` = columna 5
+- `direccion` = columna 8 si existe, o se construye con datos de ubicación
+- `provincia`
+- `departamento`
+- `distrito`
+
+Las columnas extra se ignoran.
 
 ### Revisar errores
 
@@ -207,12 +257,24 @@ En Linux:
 cat logs/import_errors.log
 ```
 
+Archivo usado por el importador rápido:
+
+```text
+logs/importacion_padron.log
+```
+
 ### Reiniciar una importación
 
 Si quieres volver a importar desde cero:
 
 1. Corrige o reemplaza `data/padron.txt`
-2. Ejecuta nuevamente:
+2. Limpia staging si quedó una ejecución previa:
+
+```bash
+docker compose exec postgres psql -U sunat -d sunat -c "DROP TABLE IF EXISTS padron_ruc_staging;"
+```
+
+3. Ejecuta nuevamente:
 
 ```bash
 docker compose exec api python scripts/importar_padron.py /app/data/padron.txt
@@ -220,12 +282,38 @@ docker compose exec api python scripts/importar_padron.py /app/data/padron.txt
 
 El script hace `TRUNCATE TABLE padron_ruc` antes de cargar, así que la tabla se recarga completa en cada ejecución.
 
+Para la versión rápida en segundo plano:
+
+```bash
+docker compose run --rm importer
+```
+
 ### Cambiar el tamaño del lote
 
 En `.env`:
 
 ```env
-IMPORT_BATCH_SIZE=100000
+IMPORT_BATCH_SIZE=500000
+```
+
+Si tienes suficiente RAM, un lote más grande reduce el número de viajes a PostgreSQL. Si el consumo sube demasiado, bájalo.
+
+### Limpiar staging manualmente
+
+```bash
+docker compose exec postgres psql -U sunat -d sunat -c "DROP TABLE IF EXISTS padron_ruc_staging;"
+```
+
+### Ver log del importador rápido
+
+```bash
+docker logs sunat-importer
+```
+
+### Ver el archivo de log
+
+```bash
+cat logs/importacion_padron.log
 ```
 
 ## 9. Generar tokens

@@ -11,6 +11,7 @@ services:
       - redis
     volumes:
       - ./data:/app/data
+      - ./logs:/app/logs
     restart: unless-stopped
 
   postgres:
@@ -46,6 +47,19 @@ services:
     depends_on:
       - postgres
     restart: unless-stopped
+
+  importer:
+    build: .
+    container_name: sunat-importer
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      - postgres
+    command: ["python", "scripts/importar_padron_fast.py", "/app/data/padron.txt"]
+    restart: "no"
 
 volumes:
   postgres_data:

@@ -1,15 +1,28 @@
 # SUNAT RUC API
 
-API de consulta de RUC con FastAPI, PostgreSQL, Redis, Docker Compose, autenticación por `X-API-Key` y panel web simple para consultas y administración básica.
+API profesional para consulta del padrón reducido de RUC de SUNAT con FastAPI, PostgreSQL, Redis, Docker Compose, autenticación por API Key y una interfaz web simple para consulta y administración.
 
 ## URLs
 
 - API docs: `http://localhost:8001/docs`
 - Web de consulta: `http://localhost:8001/web`
 - Admin web: `http://localhost:8001/admin-web`
-- pgAdmin: `http://localhost:8080`
+- pgAdmin: `http://localhost:8081`
 
-## Estructura principal
+## Características
+
+- Consulta exacta por RUC
+- Búsqueda por razón social
+- Filtros por estado, condición y ubigeo
+- Paginación y límite de resultados
+- Autenticación obligatoria con `X-API-Key`
+- Administración con `X-Admin-Key`
+- Caché opcional en Redis para consultas por RUC
+- Importación masiva optimizada con `COPY` y staging
+- Interfaz web ligera sin frameworks pesados
+- Despliegue con Docker Compose
+
+## Estructura
 
 ```text
 sunat-api/
@@ -34,50 +47,59 @@ sunat-api/
 │       ├── web.html
 │       └── admin_web.html
 ├── scripts/
-│   └── importar_padron.py
+│   ├── importar_padron.py
+│   └── importar_padron_fast.py
 ├── sql/
 │   └── schema.sql
 ├── Dockerfile
 ├── docker-compose.yml
 ├── requirements.txt
-└── .env.example
+├── .env.example
+└── README.md
 ```
 
 ## Requisitos
 
 - Docker
 - Docker Compose
-- Archivo `padron.txt` o equivalente del padrón reducido SUNAT
+- Archivo del padrón reducido de SUNAT, por ejemplo `data/padron.txt`
 
-## 1. Clonar el repo
+## 1. Clonar el repositorio
 
 ```bash
 git clone https://github.com/CodeRED-95/api-ruc.git
+cd api-ruc
 ```
 
-## 2. Crear `.env`
+## 2. Crear el archivo `.env`
 
 ```bash
 copy .env.example .env
 ```
 
-En Linux:
+En Linux o Debian:
 
 ```bash
 cp .env.example .env
 ```
 
-## 2.1. Configuración del `.env`
+## 3. Configuración del `.env`
 
-Edita el archivo `.env` con estos valores:
+Edita `.env` con valores propios. Ejemplo:
 
 ```env
-DATABASE_URL=postgresql://sunat:TU_PASSWORD@postgres:5432/sunat
+POSTGRES_DB=sunat
+POSTGRES_USER=sunat
+POSTGRES_PASSWORD=CAMBIA_ESTA_CLAVE
+
+DATABASE_URL=postgresql://sunat:CAMBIA_ESTA_CLAVE@postgres:5432/sunat
 REDIS_URL=redis://redis:6379/0
 REDIS_ENABLED=true
 CACHE_TTL_SECONDS=3600
-API_ADMIN_KEY=TU_CLAVE_ADMIN_LARGA
-HASH_SECRET=TU_SECRETO_LARGO_PARA_HASH
+
+API_ADMIN_KEY=CLAVE_ADMIN_LARGA_Y_ALEATORIA
+HASH_SECRET=SECRETO_LARGO_Y_ALEATORIO
+
 TOKEN_LENGTH=64
 DEFAULT_DAILY_LIMIT=1000
 DEFAULT_MINUTE_LIMIT=60
@@ -85,45 +107,39 @@ DEFAULT_PAGE_SIZE=50
 MAX_PAGE_SIZE=200
 DB_POOL_MIN_SIZE=5
 DB_POOL_MAX_SIZE=20
+
 PADRON_TABLE=padron_ruc
 PADRON_DELIMITER=|
-POSTGRES_DB=sunat
-POSTGRES_USER=sunat
-POSTGRES_PASSWORD=TU_PASSWORD
+
+IMPORT_BATCH_SIZE=250000
+IMPORT_SKIP_ERRORS=true
+IMPORT_LOG_ERRORS=true
+IMPORT_ENCODING=latin-1
+IMPORT_ERRORS_FILE=logs/importacion_padron.log
 ```
 
-Valores recomendados:
+### Recomendaciones
 
-- `API_ADMIN_KEY`: una cadena larga y aleatoria
-- `HASH_SECRET`: una cadena larga y aleatoria distinta de `API_ADMIN_KEY`
-- `TOKEN_LENGTH`: `64` o superior
-- `DEFAULT_DAILY_LIMIT`: según tu plan de uso
-- `DEFAULT_MINUTE_LIMIT`: según tu capacidad de tráfico
+- `API_ADMIN_KEY`: debe ser larga y aleatoria
+- `HASH_SECRET`: debe ser distinta de `API_ADMIN_KEY`
+- `TOKEN_LENGTH`: usa `64` o más
+- `IMPORT_ENCODING`: usa `latin-1` para el padrón SUNAT
+- `IMPORT_BATCH_SIZE`: súbelo si tienes suficiente RAM y quieres menos viajes a PostgreSQL
+- `REDIS_ENABLED`: deja `true` si quieres usar caché
 
-Si PostgreSQL corre en el mismo `docker-compose.yml`, normalmente no necesitas cambiar:
+## 4. Generar secretos
 
-- `POSTGRES_DB`
-- `POSTGRES_USER`
-- `REDIS_URL`
-
-## 3. Generar `API_ADMIN_KEY`
-
-Puedes generar una clave larga con Python:
+Generar `API_ADMIN_KEY`:
 
 ```bash
 python -c "import secrets; print(secrets.token_urlsafe(64))"
 ```
 
-## 4. Generar `HASH_SECRET`
+Generar `HASH_SECRET`:
 
 ```bash
 python -c "import secrets; print(secrets.token_urlsafe(64))"
 ```
-
-Pega ambos valores en `.env`:
-
-- `API_ADMIN_KEY`
-- `HASH_SECRET`
 
 ## 5. Levantar Docker Compose
 
@@ -135,92 +151,181 @@ Servicios:
 
 - API: `8001`
 - PostgreSQL: `5432`
-- Redis: `6379`
+- Redis: interno en Docker
 - pgAdmin: `8081`
+- Importador: opcional, bajo demanda
 
-Redis queda accesible solo dentro de la red Docker. La API sigue usando:
+## 6. Seguridad Docker
+
+- Redis no debe exponerse con `ports`
+- PostgreSQL puede mantenerse interno si solo lo usa la API
+- pgAdmin debe usarse en red local o detrás de autenticación
+- Cambia las contraseñas por defecto antes de producción
+- No subas tu `.env` real a GitHub
+
+## 7. Redis y `vm.overcommit_memory`
+
+Redis debe quedar accesible solo dentro de la red Docker:
 
 ```env
 REDIS_URL=redis://redis:6379/0
 ```
 
-No expongas Redis a Internet ni publiques `6379:6379` en `docker-compose.yml`.
-
-## 6. Probar Swagger
+Si el host Debian muestra advertencias sobre memoria, aplica:
 
 ```bash
-curl http://localhost:8001/docs
+cat /proc/sys/vm/overcommit_memory
+sudo sysctl vm.overcommit_memory=1
+echo "vm.overcommit_memory = 1" | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
 ```
 
-O abre:
+Esto evita errores de Redis durante guardado en segundo plano o replicación.
 
-```text
-http://localhost:8001/docs
-```
+## 8. Verificar servicios
 
-## 7. Subir el padrón
-
-Crea la carpeta local `data` en el proyecto y copia ahí el archivo:
-
-```text
-data/padron.txt
-```
-
-Ese directorio se monta dentro del contenedor en `/app/data`.
-
-## 8. Importar el padrón
-
-Ejecuta:
+Ver contenedores:
 
 ```bash
-docker compose exec api python scripts/importar_padron.py /app/data/padron.txt
+docker ps
 ```
 
-El script:
+Ver configuración final de Compose:
 
-- limpia filas inválidas
-- usa `COPY`
-- muestra progreso
-- registra errores en `logs/import_errors.log`
-- tolera líneas corruptas sin detener toda la importación
-- soporta `latin-1`
-- crea una tabla staging temporal para acelerar la carga
+```bash
+docker compose config
+```
 
-### Importación rápida en segundo plano
+Ver logs de Redis:
 
-Puedes lanzar el importador como servicio separado:
+```bash
+docker logs sunat-redis --tail=100
+```
+
+Redis no debe aparecer publicado como:
+
+```text
+0.0.0.0:6379->6379/tcp
+```
+
+## 9. Subir el padrón
+
+Copia el archivo a:
+
+```text
+./data/padron.txt
+```
+
+Ese volumen se monta dentro del contenedor en:
+
+```text
+/app/data/padron.txt
+```
+
+## 10. Importación rápida en segundo plano
+
+La importación grande debe ejecutarse con el contenedor `importer`, no dejando una terminal abierta.
+
+### Iniciar importación
 
 ```bash
 docker compose up -d importer
 ```
 
-O ejecutarlo una sola vez:
+O una sola vez:
 
 ```bash
 docker compose run --rm importer
 ```
 
-Ver avance:
+### Ver progreso
 
 ```bash
 docker logs -f sunat-importer
 ```
 
-Detener importación:
+### Detener importación
 
 ```bash
 docker stop sunat-importer
 ```
 
-Verificar conteo final:
+### Reiniciar desde cero
+
+1. Detén el importador si está corriendo
+
+```bash
+docker stop sunat-importer
+```
+
+2. Limpia staging si quedó una ejecución previa
+
+```bash
+docker compose exec postgres psql -U sunat -d sunat -c "DROP TABLE IF EXISTS padron_ruc_staging;"
+```
+
+3. Vuelve a lanzar la importación
+
+```bash
+docker compose up -d importer
+```
+
+### Limpiar staging manualmente
+
+```bash
+docker compose exec postgres psql -U sunat -d sunat -c "DROP TABLE IF EXISTS padron_ruc_staging;"
+```
+
+### Ver conteo final
+
+```bash
+docker exec -it sunat-postgres psql -U sunat -d sunat
+```
+
+Dentro de `psql`:
 
 ```sql
 SELECT COUNT(*) FROM padron_ruc;
 ```
 
-### Variables del importador
+## 11. Importador rápido
 
-Puedes ajustar el comportamiento con estas variables del `.env`:
+El script principal para cargas grandes es:
+
+```text
+scripts/importar_padron_fast.py
+```
+
+Qué hace:
+
+- conecta a PostgreSQL con `DATABASE_URL`
+- crea una tabla staging temporal sin índices
+- usa `COPY` para cargar rápido
+- soporta `latin-1`
+- ignora columnas extra del archivo
+- limpia registros inválidos
+- salta RUC inválidos
+- inserta solo las columnas necesarias en `padron_ruc`
+- crea índices al final
+- registra logs en `logs/importacion_padron.log`
+
+### Mapeo real de columnas
+
+El archivo del padrón puede tener más columnas que la tabla final. Este proyecto usa solo:
+
+- `ruc` = columna 1
+- `razon_social` = columna 2
+- `estado` = columna 3
+- `condicion` = columna 4
+- `ubigeo` = columna 5
+- `direccion` = columna 8 si existe
+- `provincia` = columna 9 si existe
+- `departamento` = columna 10 si existe
+- `distrito` = columna 11 si existe
+
+Las columnas extra se ignoran.
+
+## 12. Variables del importador
 
 ```env
 IMPORT_BATCH_SIZE=250000
@@ -230,109 +335,85 @@ IMPORT_ENCODING=latin-1
 IMPORT_ERRORS_FILE=logs/importacion_padron.log
 ```
 
-Recomendaciones:
+### Notas
 
-- `IMPORT_BATCH_SIZE`: súbelo si tienes suficiente RAM y quieres menos copias a PostgreSQL
-- `IMPORT_SKIP_ERRORS=true`: evita que una línea corrupta detenga la importación
-- `IMPORT_LOG_ERRORS=true`: guarda el detalle de líneas fallidas
-- `IMPORT_ENCODING`: usa `latin-1` para el padrón SUNAT si trae caracteres extendidos
+- `IMPORT_BATCH_SIZE` controla cuántas filas se envían por lote a PostgreSQL
+- `IMPORT_SKIP_ERRORS=true` evita que una línea inválida detenga toda la carga
+- `IMPORT_LOG_ERRORS=true` guarda errores en archivo
+- `IMPORT_ENCODING=latin-1` es la opción recomendada para el padrón SUNAT
 
-### Estructura del archivo
+## 13. Revisar errores de importación
 
-El importador usa solamente estas columnas reales del padrón:
-
-- `ruc` = columna 1
-- `razon_social` = columna 2
-- `estado` = columna 3
-- `condicion` = columna 4
-- `ubigeo` = columna 5
-- `direccion` = columna 8 si existe, o se construye con datos de ubicación
-- `provincia`
-- `departamento`
-- `distrito`
-
-Las columnas extra se ignoran.
-
-### Revisar errores
-
-```bash
-type logs\import_errors.log
-```
-
-En Linux:
-
-```bash
-cat logs/import_errors.log
-```
-
-Archivo usado por el importador rápido:
+Archivo principal:
 
 ```text
 logs/importacion_padron.log
 ```
 
-### Reiniciar una importación
-
-Si quieres volver a importar desde cero:
-
-1. Corrige o reemplaza `data/padron.txt`
-2. Limpia staging si quedó una ejecución previa:
-
-```bash
-docker compose exec postgres psql -U sunat -d sunat -c "DROP TABLE IF EXISTS padron_ruc_staging;"
-```
-
-3. Ejecuta nuevamente:
-
-```bash
-docker compose exec api python scripts/importar_padron.py /app/data/padron.txt
-```
-
-El script hace `TRUNCATE TABLE padron_ruc` antes de cargar, así que la tabla se recarga completa en cada ejecución.
-
-Para la versión rápida en segundo plano:
-
-```bash
-docker compose run --rm importer
-```
-
-### Cambiar el tamaño del lote
-
-En `.env`:
-
-```env
-IMPORT_BATCH_SIZE=500000
-```
-
-Si tienes suficiente RAM, un lote más grande reduce el número de viajes a PostgreSQL. Si el consumo sube demasiado, bájalo.
-
-### Limpiar staging manualmente
-
-```bash
-docker compose exec postgres psql -U sunat -d sunat -c "DROP TABLE IF EXISTS padron_ruc_staging;"
-```
-
-### Ver log del importador rápido
-
-```bash
-docker logs sunat-importer
-```
-
-### Ver el archivo de log
+Ver contenido:
 
 ```bash
 cat logs/importacion_padron.log
 ```
 
-## 9. Generar tokens
+Cada error registra:
 
-Desde la web admin:
+- número de línea
+- motivo
+- contenido de la línea si es posible
+
+## 14. API
+
+### Swagger
 
 ```text
-http://localhost:8001/admin-web
+http://localhost:8001/docs
 ```
 
-O por API:
+### Endpoints públicos
+
+- `GET /ruc/{ruc}`
+- `GET /buscar?nombre=texto`
+- `GET /estado/{estado}`
+- `GET /condicion/{condicion}`
+- `GET /ubigeo/{ubigeo}`
+- `GET /health`
+
+Todos requieren:
+
+```http
+X-API-Key: TU_API_KEY
+```
+
+### Respuestas esperadas
+
+- `200 OK` consulta exitosa
+- `401 Unauthorized` token faltante, inválido o desactivado
+- `404 Not Found` RUC no encontrado
+- `429 Too Many Requests` superó límite diario o por minuto
+- `500 Internal Server Error` error inesperado
+
+## 15. Admin API
+
+### Endpoints administrativos
+
+- `POST /admin/api-keys`
+- `GET /admin/api-keys`
+- `GET /admin/api-keys/search`
+- `PATCH /admin/api-keys/{api_key_id}/activate`
+- `PATCH /admin/api-keys/{api_key_id}/deactivate`
+- `DELETE /admin/api-keys/{api_key_id}`
+- `POST /admin/api-keys/{api_key_id}/regenerate`
+- `GET /admin/api-keys/{api_key_id}/stats`
+- `GET /admin/api-keys/{api_key_id}/logs`
+
+Todos requieren:
+
+```http
+X-Admin-Key: TU_API_ADMIN_KEY
+```
+
+### Generar token desde la API
 
 ```bash
 curl -X POST http://localhost:8001/admin/api-keys \
@@ -346,9 +427,36 @@ curl -X POST http://localhost:8001/admin/api-keys \
   }'
 ```
 
-La respuesta incluye la API Key generada una sola vez.
+La API devuelve el token solo una vez.
 
-## 10. Probar consulta RUC
+## 16. Interfaz web
+
+### Consulta
+
+```text
+http://localhost:8001/web
+```
+
+Permite:
+
+- ingresar `X-API-Key`
+- consultar un RUC
+- ver el resultado o el error en pantalla
+
+### Administración
+
+```text
+http://localhost:8001/admin-web
+```
+
+Permite:
+
+- ingresar `API_ADMIN_KEY`
+- generar tokens
+- definir límites diario y por minuto
+- ver el token generado
+
+## 17. Consultas de ejemplo
 
 ### curl
 
@@ -379,45 +487,15 @@ const response = await fetch("http://localhost:8001/ruc/20123456789", {
 console.log(await response.json());
 ```
 
-## 11. Usar la web
+## 18. PostgreSQL
 
-### Web de consulta
-
-Abre:
-
-```text
-http://localhost:8001/web
-```
-
-Ingresa:
-
-- tu `X-API-Key`
-- el RUC de 11 dígitos
-
-### Admin web
-
-Abre:
-
-```text
-http://localhost:8001/admin-web
-```
-
-Ingresa:
-
-- `API_ADMIN_KEY`
-- nombre del token
-- descripción opcional
-- límites diarios y por minuto
-
-## Ver PostgreSQL
-
-### Desde terminal
+### Entrar por terminal
 
 ```bash
 docker exec -it sunat-postgres psql -U sunat -d sunat
 ```
 
-Dentro de `psql`:
+### Contar registros
 
 ```sql
 SELECT COUNT(*) FROM padron_ruc;
@@ -425,63 +503,29 @@ SELECT COUNT(*) FROM padron_ruc;
 
 ### pgAdmin
 
-Abre:
-
 ```text
 http://localhost:8081
 ```
 
-Credenciales:
+Credenciales por defecto:
 
 - Email: `admin@admin.com`
 - Password: `admin123`
 
-Si el puerto `8081` está ocupado, cambia el mapeo en `docker-compose.yml` a otro puerto libre, por ejemplo `8082:80`.
-
-Para conectar a PostgreSQL desde pgAdmin:
+Conexión interna a PostgreSQL:
 
 - Host: `postgres`
 - Puerto: `5432`
-- DB: `sunat`
-- User: `sunat`
+- Base: `sunat`
+- Usuario: `sunat`
 - Password: la de tu `.env`
 
-## Comandos útiles
+## 19. Comandos útiles
 
-Ver logs:
+Ver logs de la API:
 
 ```bash
 docker logs sunat-api --tail=100
-```
-
-Entrar a PostgreSQL:
-
-```bash
-docker exec -it sunat-postgres psql -U sunat -d sunat
-```
-
-Contar registros:
-
-```sql
-SELECT COUNT(*) FROM padron_ruc;
-```
-
-Probar docs:
-
-```bash
-curl http://localhost:8001/docs
-```
-
-Validar configuración Docker:
-
-```bash
-docker compose config
-```
-
-Ver contenedores:
-
-```bash
-docker ps
 ```
 
 Ver logs de Redis:
@@ -490,54 +534,35 @@ Ver logs de Redis:
 docker logs sunat-redis --tail=100
 ```
 
-Confirmar que Redis no está publicado al host:
-
-```text
-No debe aparecer 0.0.0.0:6379->6379/tcp en docker ps
-```
-
-Importar padrón:
+Ver configuración resuelta de Docker:
 
 ```bash
-docker compose exec api python scripts/importar_padron.py /app/data/padron.txt
+docker compose config
 ```
 
-## Endpoints principales
+Ver contenedores activos:
 
-- `GET /ruc/{ruc}`
-- `GET /buscar?nombre=texto`
-- `GET /estado/{estado}`
-- `GET /condicion/{condicion}`
-- `GET /ubigeo/{ubigeo}`
-- `GET /health`
+```bash
+docker ps
+```
 
-## Endpoints administrativos
+Comprobar que Redis no está publicado al host:
 
-- `POST /admin/api-keys`
-- `GET /admin/api-keys`
-- `GET /admin/api-keys/search`
-- `PATCH /admin/api-keys/{api_key_id}/activate`
-- `PATCH /admin/api-keys/{api_key_id}/deactivate`
-- `DELETE /admin/api-keys/{api_key_id}`
-- `POST /admin/api-keys/{api_key_id}/regenerate`
-- `GET /admin/api-keys/{api_key_id}/stats`
-- `GET /admin/api-keys/{api_key_id}/logs`
+```text
+No debe aparecer 0.0.0.0:6379->6379/tcp
+```
 
-## Notas
+## 20. Notas de seguridad
 
-- Todos los endpoints de consulta requieren `X-API-Key`.
-- Los endpoints administrativos requieren `X-Admin-Key`.
-- La API corre en `8001`.
-- El contenedor también expone la UI web y pgAdmin.
-- Redis no debe tener `ports` publicados si solo lo consume la API.
-- PostgreSQL idealmente no debería exponerse si solo lo usa la API.
-- pgAdmin debe usarse en red local o detrás de autenticación.
-- Cambia las contraseñas por defecto antes de producción.
-- No subas tu `.env` real a GitHub.
+- Redis no debe exponer `ports`
+- PostgreSQL no debería exponerse si solo lo usa la API
+- pgAdmin debe usarse solo en red local o detrás de autenticación
+- Cambia las credenciales por defecto antes de producción
+- Nunca subas el `.env` real a GitHub
 
-## Solución para `vm.overcommit_memory`
+## 21. Solución para `vm.overcommit_memory`
 
-Si Redis muestra advertencias durante persistencia o replicación, habilita el overcommit de memoria en el host Debian:
+Si Redis muestra la advertencia de overcommit en Debian:
 
 ```bash
 cat /proc/sys/vm/overcommit_memory
@@ -546,4 +571,29 @@ echo "vm.overcommit_memory = 1" | sudo tee -a /etc/sysctl.conf
 sudo sysctl -p
 ```
 
-Esto evita errores de Redis durante guardado en segundo plano o replicación.
+Esto evita errores de Redis durante persistencia o replicación.
+
+## 22. Importación anterior
+
+El proyecto también conserva `scripts/importar_padron.py`, pero para cargas grandes se recomienda usar:
+
+```bash
+docker compose up -d importer
+```
+
+o:
+
+```bash
+docker compose run --rm importer
+```
+
+## 23. Flujo recomendado de producción básica
+
+1. Configura `.env`
+2. Levanta `postgres`, `redis`, `api`, `pgadmin`
+3. Copia `padron.txt` a `./data/padron.txt`
+4. Ejecuta el importador `importer`
+5. Revisa logs con `docker logs -f sunat-importer`
+6. Verifica `SELECT COUNT(*) FROM padron_ruc;`
+7. Consume la API en `http://localhost:8001/docs`
+

@@ -135,12 +135,12 @@ def build_quick_signature(path: Path) -> FileMeta:
     signature_parts = [
         str(path.resolve()),
         path.name,
-        str(file_size),
-        file_mtime,
+        file_size,
+        file_mtime.isoformat(),
         head.hex(),
         tail.hex(),
     ]
-    signature_source = "|".join(signature_parts).encode("utf-8", errors="ignore")
+    signature_source = "|".join(str(x) for x in signature_parts).encode("utf-8", errors="ignore")
     signature_hash = hashlib.sha256(signature_source).hexdigest()
     return FileMeta(
         file_name=path.name,
